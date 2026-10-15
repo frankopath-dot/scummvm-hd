@@ -28,6 +28,7 @@
 #include "backends/keymapper/keymapper.h"
 
 #include "scumm/debugger.h"
+#include "scumm/hd_backgrounds.h"
 #include "scumm/dialogs.h"
 #include "scumm/insane/insane.h"
 #include "scumm/imuse/imuse.h"
@@ -253,6 +254,11 @@ void ScummEngine::parseEvent(Common::Event event) {
 
 		if (_useMacScreenCorrectHeight && _macScreen) {
 			_mouse.y -= _macScreenDrawOffset;
+		}
+
+		if (_hd) {
+			_mouse.x /= HdBackgrounds::kScale;
+			_mouse.y /= HdBackgrounds::kScale;
 		}
 
 		break;

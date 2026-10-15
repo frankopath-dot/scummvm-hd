@@ -19,6 +19,7 @@
  *
  */
 
+#include "scumm/hd_backgrounds.h"
 #include "scumm/actor.h"
 #include "scumm/bomp.h"
 #include "scumm/he/intern_he.h"
@@ -751,6 +752,9 @@ void ScummEngine::drawObject(int obj, int scrollType) {
 		else
 #endif
 			_gdi->drawBitmap(ptr, &_virtscr[kMainVirtScreen], x, ypos, width * 8, height, x - xpos, numstrip, flags);
+
+		if (_hd)
+			_hd->objectDrawn(_currentRoom, od.obj_nr, getState(od.obj_nr), od.x_pos, od.y_pos, od.width, od.height);
 	}
 
 	if (patchedBmpPtr)

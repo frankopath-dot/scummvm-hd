@@ -31,6 +31,7 @@
 #include "graphics/macgamma.h"
 #include "graphics/paletteman.h"
 
+#include "scumm/hd_backgrounds.h"
 #include "scumm/file.h"
 #include "scumm/imuse_digi/dimuse_engine.h"
 #include "scumm/scumm.h"
@@ -1339,6 +1340,8 @@ void SmushPlayer::updateScreen() {
 void SmushPlayer::handleGameUpdateScreen(const byte *src, int srcPitch, int width, int height) {
 	if (_vm->_macScreen) {
 		_vm->mac_drawBufferToScreen(src, srcPitch, 0, 0, width, height);
+	} else if (_vm->_hd) {
+		_vm->_hd->blit(src, srcPitch, 0, 0, width, height);
 	} else {
 		_vm->_system->copyRectToScreen(src, srcPitch, 0, 0, width, height);
 	}
@@ -1508,7 +1511,10 @@ void SmushPlayer::play(const char *filename, int32 speed, int32 offset, int32 st
 			_vm->scummLoop_handleSound();
 
 			if (_warpNeeded) {
-				_vm->_system->warpMouse(_vm->_macScreen ? _warpX * 2 : _warpX, _vm->_macScreen ? (_warpY * 2 + 2 * _vm->_macScreenDrawOffset) : _warpY);
+				if (_vm->_hd)
+					_vm->_system->warpMouse(_warpX * HdBackgrounds::kScale, _warpY * HdBackgrounds::kScale);
+				else
+					_vm->_system->warpMouse(_vm->_macScreen ? _warpX * 2 : _warpX, _vm->_macScreen ? (_warpY * 2 + 2 * _vm->_macScreenDrawOffset) : _warpY);
 				_warpNeeded = false;
 			}
 		}
@@ -1541,6 +1547,8 @@ void SmushPlayer::play(const char *filename, int32 speed, int32 offset, int32 st
 					}
 
 					_vm->_system->getPaletteManager()->setPalette(palette + _palDirtyMin * 3, _palDirtyMin, _palDirtyMax - _palDirtyMin + 1);
+				} else if (_vm->_hd) {
+					_vm->_hd->setPalette(_pal + _palDirtyMin * 3, _palDirtyMin, _palDirtyMax - _palDirtyMin + 1);
 				} else {
 					_vm->_system->getPaletteManager()->setPalette(_pal + _palDirtyMin * 3, _palDirtyMin, _palDirtyMax - _palDirtyMin + 1);
 				}

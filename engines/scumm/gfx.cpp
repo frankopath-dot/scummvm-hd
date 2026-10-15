@@ -21,6 +21,7 @@
 
 #include "common/system.h"
 #include "scumm/actor.h"
+#include "scumm/hd_backgrounds.h"
 #include "scumm/charset.h"
 #ifdef ENABLE_HE
 #include "scumm/he/intern_he.h"
@@ -814,6 +815,12 @@ void ScummEngine::drawStripToScreen(VirtScreen *vs, int x, int width, int top, i
 		// video buffer to screen with the following routine, because for newer games we
 		// need the text overlay to be already stamped on top of the buffer.
 		mac_drawBufferToScreen((const byte *)src, pitch, x, y, width, height);
+	} else if (_hd) {
+		if (vs->number == kMainVirtScreen)
+			_hd->blit((const byte *)src, pitch, x, y, width, height, _currentRoom, vs->xstart + x, top,
+			          vs->hasTwoBuffers ? vs->getBackPixels(x, top) : nullptr);
+		else
+			_hd->blit((const byte *)src, pitch, x, y, width, height);
 	} else {
 		// Finally blit the whole thing to the screen
 		_system->copyRectToScreen(src, pitch, x, y, width, height);
@@ -1726,7 +1733,7 @@ void ScummEngine::drawPixel(VirtScreen *vs, int x, int y, int16 color, bool useB
  */
 void ScummEngine::moveScreen(int dx, int dy, int height) {
 	// Short circuit check - do we have to do anything anyway?
-	if ((dx == 0 && dy == 0) || height <= 0)
+	if ((dx == 0 && dy == 0) || height <= 0 || _hd)
 		return;
 
 	Graphics::Surface *screen = _system->lockScreen();
@@ -4749,7 +4756,13 @@ void ScummEngine::dissolveEffect(int width, int height) {
 				src = ditherVGAtoEGA(pitch, x, y, wd, ht);
 			}
 
-			_system->copyRectToScreen(src, pitch, x, y, wd, ht);
+			if (_hd && vs->number == kMainVirtScreen)
+				_hd->blit(src, pitch, x, y, wd, ht, _currentRoom, vs->xstart + x, y - vs->topline,
+				          vs->hasTwoBuffers ? vs->getBackPixels(x, y - vs->topline) : nullptr);
+			else if (_hd)
+				_hd->blit(src, pitch, x, y, wd, ht);
+			else
+				_system->copyRectToScreen(src, pitch, x, y, wd, ht);
 		}
 
 		// Test for 1x1 pattern...
@@ -4778,6 +4791,11 @@ void ScummEngine::dissolveEffect(int width, int height) {
 }
 
 void ScummEngine::scrollEffect(int dir) {
+	if (_hd) {
+		VirtScreen *hdVs = &_virtscr[kMainVirtScreen];
+		drawStripToScreen(hdVs, 0, hdVs->w, 0, hdVs->h);
+		return;
+	}
 #ifndef DISABLE_TOWNS_DUAL_LAYER_MODE
 	// The FM-Towns versions use smooth scrolling here, but only for left and right.
 	if (_enableSmoothScrolling && dir > 1) {

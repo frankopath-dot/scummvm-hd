@@ -1839,6 +1839,7 @@ bool OpenGLGraphicsManager::gameNeedsAspectRatioCorrection() const {
 		// But just for 320x200, 640x400, 640x350 (16 color EGA) and Hercules games, since other
 		// games do not need this.
 		return (width == 320 && height == 200) || (width == 640 && height == 400) ||
+		       (width == 1280 && height == 800) ||
 			   (width == 640 && height == 350) ||
 		       (width == 720 && height == 348) || (width == 720 && height == 350);
 	}

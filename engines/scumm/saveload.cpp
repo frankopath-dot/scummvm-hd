@@ -26,6 +26,7 @@
 #include "common/system.h"
 #include "common/translation.h"
 
+#include "scumm/hd_backgrounds.h"
 #include "scumm/actor.h"
 #include "scumm/charset.h"
 #include "scumm/imuse_digi/dimuse_engine.h"
@@ -1692,6 +1693,9 @@ void ScummEngine::saveLoadWithSerializer(Common::Serializer &s) {
 		} else if (_macScreen) {
 			x *= 2;
 			y *= 2;
+		} else if (_hd) {
+			x *= HdBackgrounds::kScale;
+			y *= HdBackgrounds::kScale;
 		}
 
 		updateCursor();

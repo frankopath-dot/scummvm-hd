@@ -27,6 +27,7 @@
 #ifdef ENABLE_HE
 #include "graphics/wincursor.h"
 #endif
+#include "scumm/hd_backgrounds.h"
 #include "scumm/bomp.h"
 #include "scumm/charset.h"
 #include "scumm/he/intern_he.h"
@@ -573,6 +574,12 @@ void ScummEngine_v7::updateCursor() {
 
 #ifdef USE_RGB_COLOR
 	Graphics::PixelFormat format = _system->getScreenFormat();
+	if (_hd) {
+		uint32 hdTrans;
+		const byte *hdCursor = _hd->convertCursor(cursor, width, height, hotspotX, hotspotY, transColor, hdTrans);
+		CursorMan.replaceCursor(hdCursor, width, height, hotspotX, hotspotY, hdTrans, false, &format);
+		return;
+	}
 	CursorMan.replaceCursor(cursor, width, height,
 							hotspotX, hotspotY,
 							transColor,

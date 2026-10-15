@@ -59,6 +59,7 @@
 #include "scumm/he/animation_he.h"
 #include "scumm/he/font_he.h"
 #include "scumm/he/intern_he.h"
+#include "scumm/hd_backgrounds.h"
 #include "scumm/he/logic_he.h"
 #include "scumm/he/sound_he.h"
 #include "scumm/object.h"
@@ -1494,7 +1495,10 @@ Common::Error ScummEngine::init() {
 		if (_game.platform == Common::kPlatformFMTowns && _game.version == 5)
 			return Common::Error(Common::kUnsupportedColorMode, "This game requires dual graphics layer support which is disabled in this build");
 #endif
-			initGraphics(screenWidth, screenHeight);
+			if (_game.version == 7 && ConfMan.hasKey("hd_backgrounds") && !ConfMan.get("hd_backgrounds").empty())
+				initHdBackgrounds(screenWidth, screenHeight);
+			if (!_hd)
+				initGraphics(screenWidth, screenHeight);
 
 			if (_game.platform == Common::kPlatformNES)
 				_system->fillScreen(0x1d);
@@ -3097,6 +3101,17 @@ void ScummEngine_v0::scummLoop(int delta) {
 }
 
 void ScummEngine::scummLoop(int delta) {
+	// Testing aid for the HD renderer: jump to a room once the game is playable.
+	if (_hd && _currentRoom == 2) {
+		int room = HdBackgrounds::takeTestRoom();
+		if (room > 0) {
+			_actors[VAR(VAR_EGO)]->_room = room;
+			_sound->stopAllSounds();
+			startScene(room, nullptr, 0);
+			_fullRedraw = true;
+		}
+	}
+
 	// Notify the script about how much time has passed, in jiffies
 	if (VAR_TIMER != 0xFF)
 		VAR(VAR_TIMER) = delta;
@@ -4534,5 +4549,34 @@ void ScummEngine::errorString(const char *buf1, char *buf2, int buf2Size) {
 	}
 }
 
+
+} // End of namespace Scumm
+
+namespace Scumm {
+
+void ScummEngine::initHdBackgrounds(int width, int height) {
+	Common::FSNode dir(Common::Path(ConfMan.get("hd_backgrounds"), Common::Path::kNativeSeparator));
+	if (!dir.isDirectory()) {
+		warning("HD backgrounds: '%s' is not a directory", ConfMan.get("hd_backgrounds").c_str());
+		return;
+	}
+	Common::List<Graphics::PixelFormat> modes = _system->getSupportedFormats();
+	for (Common::List<Graphics::PixelFormat>::iterator g = modes.begin(); g != modes.end(); ++g) {
+		if (g->bytesPerPixel != 4)
+			g = modes.reverse_erase(g);
+	}
+	if (modes.empty()) {
+		warning("HD backgrounds: no 32-bit screen format available");
+		return;
+	}
+	initGraphics(width * HdBackgrounds::kScale, height * HdBackgrounds::kScale, modes);
+	if (_system->getScreenFormat().bytesPerPixel != 4) {
+		warning("HD backgrounds: could not set up a 32-bit screen");
+		initGraphics(width, height);
+		return;
+	}
+	_hd = new HdBackgrounds(_system, dir, width, height);
+	debug(1, "HD backgrounds enabled from %s", dir.getPath().toString().c_str());
+}
 
 } // End of namespace Scumm

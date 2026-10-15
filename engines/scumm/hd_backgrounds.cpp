@@ -1,0 +1,426 @@
+/* ScummVM - Graphic Adventure Engine
+ *
+ * ScummVM is the legal property of its developers, whose names
+ * are too numerous to list here. Please refer to the COPYRIGHT
+ * file distributed with this source distribution.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ */
+
+#define FORBIDDEN_SYMBOL_EXCEPTION_getenv
+
+#include "common/debug.h"
+#include "common/file.h"
+#include "common/stream.h"
+#include "common/system.h"
+#include "image/png.h"
+
+#include "scumm/hd_backgrounds.h"
+
+namespace Scumm {
+
+bool HdBackgrounds::HdImage::load(const Common::FSNode &hdFile, const Common::FSNode &origFile, byte *palette) {
+	free();
+	if (!hdFile.exists() || !origFile.exists())
+		return false;
+
+	Image::PNGDecoder origDec, hdDec;
+	Common::SeekableReadStream *s = origFile.createReadStream();
+	bool ok = s && origDec.loadStream(*s);
+	delete s;
+	const Graphics::Surface *o = ok ? origDec.getSurface() : nullptr;
+	if (!o || o->format.bytesPerPixel != 1) {
+		warning("HD backgrounds: %s is not an indexed PNG", origFile.getName().c_str());
+		return false;
+	}
+	s = hdFile.createReadStream();
+	ok = s && hdDec.loadStream(*s);
+	delete s;
+	const Graphics::Surface *h2 = ok ? hdDec.getSurface() : nullptr;
+	if (!h2 || h2->w != o->w * kScale || h2->h != o->h * kScale) {
+		warning("HD backgrounds: %s is not %dx the size of the original", hdFile.getName().c_str(), kScale);
+		return false;
+	}
+
+	w = o->w;
+	h = o->h;
+	orig = new byte[w * h];
+	for (int y = 0; y < h; ++y)
+		memcpy(orig + y * w, o->getBasePtr(0, y), w);
+	if (palette) {
+		memset(palette, 0, 3 * 256);
+		const Graphics::Palette &pal = origDec.getPalette();
+		pal.grab(palette, 0, MIN<uint>(pal.size(), 256));
+	}
+	hd = h2->convertTo(Graphics::PixelFormat::createFormatRGBA32(false));
+	return true;
+}
+
+void HdBackgrounds::HdImage::free() {
+	if (hd) {
+		hd->free();
+		delete hd;
+		hd = nullptr;
+	}
+	delete[] orig;
+	orig = nullptr;
+	w = h = 0;
+}
+
+HdBackgrounds::HdBackgrounds(OSystem *system, const Common::FSNode &dir, int width, int height)
+	: _system(system), _dir(dir), _w(width), _h(height), _room(-1), _screenRoom(-1), _cursor(nullptr) {
+	_format = _system->getScreenFormat();
+	_out.create(_w * kScale, _h * kScale, _format);
+	_screen = new byte[_w * _h]();
+	_back = new byte[_w * _h]();
+	_why = new byte[_w * _h]();
+	_roomPos = new int16[_w * _h * 2];
+	for (int i = 0; i < _w * _h * 2; ++i)
+		_roomPos[i] = -1;
+	memset(_palette, 0, sizeof(_palette));
+	memset(_origPalette, 0, sizeof(_origPalette));
+	for (int i = 0; i < 256; ++i) {
+		_palette32[i] = _format.RGBToColor(0, 0, 0);
+		_tintOk[i] = false;
+		_cycled[i] = false;
+	}
+}
+
+HdBackgrounds::~HdBackgrounds() {
+	_out.free();
+	_bg.free();
+	clearObjects();
+	delete[] _screen;
+	delete[] _back;
+	delete[] _why;
+	delete[] _roomPos;
+	delete[] _cursor;
+}
+
+Common::FSNode HdBackgrounds::findRoomFile(const Common::FSNode &dir, int room) const {
+	Common::FSList files;
+	if (!dir.getChildren(files, Common::FSNode::kListFilesOnly))
+		return Common::FSNode();
+	Common::String prefix = Common::String::format("%04d_", room);
+	for (const Common::FSNode &f : files) {
+		Common::String name = f.getName();
+		if (name.hasPrefix(prefix) && name.hasSuffixIgnoreCase(".png"))
+			return f;
+	}
+	return Common::FSNode();
+}
+
+void HdBackgrounds::clearObjects() {
+	for (HdObject *o : _objects) {
+		o->image.free();
+		delete o;
+	}
+	_objects.clear();
+}
+
+void HdBackgrounds::loadRoom(int room) {
+	_bg.free();
+	clearObjects();
+	_room = room;	// remember the attempt, so a missing room is only looked up once
+
+	if (!_bg.load(findRoomFile(_dir, room), findRoomFile(_dir.getChild("original"), room), _origPalette)) {
+		debug(1, "HD backgrounds: no HD image for room %d", room);
+		return;
+	}
+	debug(1, "HD backgrounds: loaded room %d (%dx%d)", room, _bg.w, _bg.h);
+	updateTints();
+}
+
+void HdBackgrounds::objectDrawn(int room, int obj, int state, int x, int y, int w, int h) {
+	if (room != _room)
+		loadRoom(room);
+	if (!_bg.hd)
+		return;
+
+	for (uint i = 0; i < _objects.size(); ++i) {
+		HdObject *o = _objects[i];
+		if (o->obj != obj)
+			continue;
+		if (o->state == state && o->x == x && o->y == y)
+			return;
+		o->image.free();
+		delete o;
+		_objects.remove_at(i);
+		break;
+	}
+
+	HdObject *o = new HdObject();
+	o->obj = obj;
+	o->state = state;
+	o->x = x;
+	o->y = y;
+	Common::String name = Common::String::format("%04d_%04d_IM%02X.png", room, obj, state);
+	Common::FSNode objDir = _dir.getChild("objects");
+	if (o->image.load(objDir.getChild(name), objDir.getChild("original").getChild(name), nullptr) &&
+			(o->image.w != w || o->image.h != h)) {
+		warning("HD backgrounds: %s is %dx%d, object is %dx%d", name.c_str(), o->image.w, o->image.h, w, h);
+		o->image.free();
+	}
+	debug(1, "HD backgrounds: object %s at %d,%d%s", name.c_str(), x, y, o->image.hd ? "" : " (no HD image)");
+	_objects.push_back(o);
+}
+
+void HdBackgrounds::setCycledColors(const byte *used) {
+	for (int i = 0; i < 256; ++i)
+		_cycled[i] = used[i] != 0;
+	if (_bg.hd)
+		updateTints();
+}
+
+// Per palette index, find the per-channel factor that turns the room's
+// original color into the current one, so fades and lighting changes carry
+// over to the HD image. Color-cycled indices are recolored the same way, which
+// animates them in HD. Other indices whose color changed in a way that is not
+// a plain brightening/darkening are left to the original pixels, as is the
+// (171, 0, 171) placeholder color The Dig uses for areas filled at runtime.
+void HdBackgrounds::updateTints() {
+	for (int i = 0; i < 256; ++i) {
+		const byte *o = _origPalette + i * 3;
+		const byte *c = _palette + i * 3;
+		uint k[3];
+		uint kMin = 0xFFFF, kMax = 0;
+		for (int ch = 0; ch < 3; ++ch) {
+			k[ch] = MIN<uint>((c[ch] + 4) * 256 / (o[ch] + 4), 1024);
+			kMin = MIN(kMin, k[ch]);
+			kMax = MAX(kMax, k[ch]);
+		}
+		const bool placeholder = o[0] == 171 && o[1] == 0 && o[2] == 171;
+		_tintOk[i] = !placeholder && (_cycled[i] || kMax * 5 <= kMin * 8);   // channels within a factor of 1.6
+		for (int ch = 0; ch < 3; ++ch)
+			_tint[i][ch] = k[ch];
+	}
+}
+
+void HdBackgrounds::setPalette(const byte *colors, uint first, uint num) {
+	if (!memcmp(_palette + first * 3, colors, num * 3))
+		return;
+	memcpy(_palette + first * 3, colors, num * 3);
+	for (uint i = first; i < first + num; ++i)
+		_palette32[i] = _format.RGBToColor(_palette[i * 3], _palette[i * 3 + 1], _palette[i * 3 + 2]);
+	if (_bg.hd)
+		updateTints();
+	render(0, 0, _w, _h);
+}
+
+void HdBackgrounds::blit(const byte *src, int pitch, int x, int y, int w, int h, int room, int roomX, int roomY, const byte *back) {
+	if (x < 0) { w += x; src -= x; if (back) back -= x; if (roomX >= 0) roomX -= x; x = 0; }
+	if (y < 0) { h += y; src -= y * pitch; if (back) back -= y * pitch; if (roomY >= 0) roomY -= y; y = 0; }
+	w = MIN(w, _w - x);
+	h = MIN(h, _h - y);
+	if (w <= 0 || h <= 0)
+		return;
+
+	if (room >= 0 && room != _room)
+		loadRoom(room);
+	if (room >= 0)
+		_screenRoom = room;
+
+	for (int j = 0; j < h; ++j) {
+		memcpy(_screen + (y + j) * _w + x, src + j * pitch, w);
+		memcpy(_back + (y + j) * _w + x, (back ? back : src) + j * pitch, w);
+		int16 *pos = _roomPos + ((y + j) * _w + x) * 2;
+		for (int i = 0; i < w; ++i) {
+			*pos++ = roomX < 0 ? -1 : roomX + i;
+			*pos++ = roomY < 0 ? -1 : roomY + j;
+		}
+	}
+	render(x, y, w, h);
+}
+
+// Write the kScale x kScale HD block for image pixel ix, iy if the image has
+// palette index idx there. field points at the smoothed tint of the screen
+// pixel being drawn; the tint is interpolated towards the neighboring pixels'
+// tints across the block.
+bool HdBackgrounds::hdPixel(const HdImage &img, int ix, int iy, byte idx, const uint16 *field, int fieldPitch, uint32 *dst, int dstPitch) const {
+	if (!img.hd || ix < 0 || iy < 0 || ix >= img.w || iy >= img.h || img.orig[iy * img.w + ix] != idx)
+		return false;
+	const Graphics::PixelFormat &hdFormat = img.hd->format;
+	const int hdPitch = img.hd->pitch / 4;
+	const uint32 *hp = (const uint32 *)img.hd->getPixels() + iy * kScale * hdPitch + ix * kScale;
+	for (int dy = 0; dy < kScale; ++dy) {
+		// Distance of the sub-pixel center from the block center, in 1/(2 * kScale)
+		const int oy = 2 * dy + 1 - kScale, wy = ABS(oy);
+		const uint16 *rowY = field + (oy < 0 ? -fieldPitch : fieldPitch);
+		for (int dx = 0; dx < kScale; ++dx) {
+			const int ox = 2 * dx + 1 - kScale, wx = ABS(ox);
+			const int sx = ox < 0 ? -3 : 3;
+			const int n = 2 * kScale;
+			uint k[3];
+			for (int ch = 0; ch < 3; ++ch)
+				k[ch] = ((n - wx) * (n - wy) * field[ch] + wx * (n - wy) * field[sx + ch] +
+				         (n - wx) * wy * rowY[ch] + wx * wy * rowY[sx + ch]) / (n * n);
+			byte r, g, b;
+			hdFormat.colorToRGB(hp[dy * hdPitch + dx], r, g, b);
+			dst[dy * dstPitch + dx] = _format.RGBToColor(
+				MIN<uint>(255, r * k[0] >> 8), MIN<uint>(255, g * k[1] >> 8), MIN<uint>(255, b * k[2] >> 8));
+		}
+	}
+	return true;
+}
+
+// Average the tints of screen pixel i, j and its neighbors. Dithered areas mix
+// palette indices that may be tinted differently (e.g. when only some of them
+// are color-cycled); tinting each HD block by its own index would bring the
+// dither pattern back.
+void HdBackgrounds::smoothTint(int i, int j, uint16 *k) const {
+	const byte idx = _screen[CLIP(j, 0, _h - 1) * _w + CLIP(i, 0, _w - 1)];
+	uint sum[3] = { 0, 0, 0 }, n = 0;
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			const int ni = CLIP(i + dx, 0, _w - 1), nj = CLIP(j + dy, 0, _h - 1);
+			const byte nidx = _screen[nj * _w + ni];
+			const uint16 *t = _tintOk[nidx] ? _tint[nidx] : _tint[idx];
+			sum[0] += t[0];
+			sum[1] += t[1];
+			sum[2] += t[2];
+			++n;
+		}
+	}
+	for (int ch = 0; ch < 3; ++ch)
+		k[ch] = sum[ch] / n;
+}
+
+static void scale2x(const byte *src, int w, int h, byte *dst) {
+	const int dw = w * 2;
+	for (int y = 0; y < h; ++y) {
+		for (int x = 0; x < w; ++x) {
+			const byte p = src[y * w + x];
+			const byte a = src[MAX(y - 1, 0) * w + x], d = src[MIN(y + 1, h - 1) * w + x];
+			const byte c = src[y * w + MAX(x - 1, 0)], b = src[y * w + MIN(x + 1, w - 1)];
+			byte *o = dst + 2 * y * dw + 2 * x;
+			if (c == a && c != d && a != b) o[0] = a; else o[0] = p;
+			if (a == b && a != c && b != d) o[1] = b; else o[1] = p;
+			if (d == c && d != b && c != a) o[dw] = c; else o[dw] = p;
+			if (b == d && b != a && d != c) o[dw + 1] = d; else o[dw + 1] = p;
+		}
+	}
+}
+
+// Scale4x the palette indices of the area plus a two pixel border, for the
+// pixels that are not replaced by HD images (actors, text, videos).
+void HdBackgrounds::scaleIndices(int x, int y, int w, int h) {
+	const int bw = w + 4, bh = h + 4;
+	Common::Array<byte> src(bw * bh);
+	for (int j = 0; j < bh; ++j)
+		for (int i = 0; i < bw; ++i)
+			src[j * bw + i] = _screen[CLIP(y + j - 2, 0, _h - 1) * _w + CLIP(x + i - 2, 0, _w - 1)];
+	_scaled1.resize(bw * bh * 4);
+	_scaled2.resize(bw * bh * 16);
+	scale2x(src.data(), bw, bh, _scaled1.data());
+	scale2x(_scaled1.data(), bw * 2, bh * 2, _scaled2.data());
+}
+
+void HdBackgrounds::render(int x, int y, int w, int h) {
+	const bool haveHd = _bg.hd && _screenRoom == _room;
+	const int dstPitch = _out.pitch / 4;
+
+	scaleIndices(x, y, w, h);
+	const int scaledPitch = (w + 4) * kScale;
+
+	// Smoothed tints for the area plus a one pixel border
+	const int fieldPitch = (w + 2) * 3;
+	if (haveHd) {
+		_field.resize(fieldPitch * (h + 2));
+		for (int j = 0; j < h + 2; ++j)
+			for (int i = 0; i < w + 2; ++i)
+				smoothTint(x + i - 1, y + j - 1, &_field[j * fieldPitch + i * 3]);
+	}
+
+	for (int j = y; j < y + h; ++j) {
+		for (int i = x; i < x + w; ++i) {
+			const byte idx = _screen[j * _w + i];
+			const int16 rx = _roomPos[(j * _w + i) * 2];
+			const int16 ry = _roomPos[(j * _w + i) * 2 + 1];
+			uint32 *dst = (uint32 *)_out.getBasePtr(i * kScale, j * kScale);
+
+			bool done = false;
+			byte &why = _why[j * _w + i];
+			why = !haveHd ? 0 : (rx < 0 || ry < 0) ? 1 : !_tintOk[idx] ? 2 : _back[j * _w + i] != idx ? 3 : 4;
+			if (why == 4) {
+				const uint16 *field = &_field[(j - y + 1) * fieldPitch + (i - x + 1) * 3];
+				done = hdPixel(_bg, rx, ry, idx, field, fieldPitch, dst, dstPitch);
+				if (done)
+					why = 5;
+				for (int o = _objects.size() - 1; !done && o >= 0; --o)
+					if ((done = hdPixel(_objects[o]->image, rx - _objects[o]->x, ry - _objects[o]->y, idx, field, fieldPitch, dst, dstPitch)))
+						why = 6;
+			}
+			if (!done) {
+				const byte *s = &_scaled2[(j - y + 2) * kScale * scaledPitch + (i - x + 2) * kScale];
+				for (int dy = 0; dy < kScale; ++dy)
+					for (int dx = 0; dx < kScale; ++dx)
+						dst[dy * dstPitch + dx] = _palette32[s[dy * scaledPitch + dx]];
+			}
+		}
+	}
+	_system->copyRectToScreen(_out.getBasePtr(x * kScale, y * kScale), _out.pitch,
+	                          x * kScale, y * kScale, w * kScale, h * kScale);
+
+	// Testing aid: SCUMMVM_HD_DUMP=<dir> saves the full frame every 3 seconds.
+	static const char *dumpDir = getenv("SCUMMVM_HD_DUMP");
+	static uint32 lastDump = 0;
+	static int dumpCount = 0;
+	if (dumpDir && _system->getMillis() - lastDump > 3000) {
+		lastDump = _system->getMillis();
+		Common::DumpFile f;
+		Common::Path path(Common::String::format("%s/frame_%03d.png", dumpDir, dumpCount++), '/');
+		if (f.open(path, true))
+			Image::writePNG(f, _out);
+		// why map: 0 no HD room, 1 not room pixel, 2 color changed, 3 actor/text,
+		// 4 no matching image pixel, 5 HD background, 6 HD object
+		static const byte whyPal[7 * 3] = { 0,0,0, 60,60,60, 255,0,255, 255,0,0, 255,255,0, 0,160,0, 0,120,255 };
+		Graphics::Surface whySurf;
+		whySurf.init(_w, _h, _w, _why, Graphics::PixelFormat::createFormatCLUT8());
+		Common::DumpFile wf;
+		Common::Path wpath(Common::String::format("%s/why_%03d.png", dumpDir, dumpCount - 1), '/');
+		if (wf.open(wpath, true))
+			Image::writePNG(wf, whySurf, whyPal, 7);
+	}
+}
+
+int HdBackgrounds::takeTestRoom() {
+	static bool taken = false;
+	const char *room = getenv("SCUMMVM_HD_ROOM");
+	if (taken || !room)
+		return 0;
+	taken = true;
+	return atoi(room);
+}
+
+const byte *HdBackgrounds::convertCursor(const byte *src, int &w, int &h, int &hotX, int &hotY, byte transColor, uint32 &transOut) {
+	const int sw = w * kScale, sh = h * kScale;
+	delete[] _cursor;
+	_cursor = new byte[sw * sh * 4];
+	uint32 *dst = (uint32 *)_cursor;
+	transOut = _format.ARGBToColor(0, 255, 0, 255);
+	for (int y = 0; y < sh; ++y) {
+		for (int x = 0; x < sw; ++x) {
+			const byte c = src[(y / kScale) * w + x / kScale];
+			*dst++ = (c == transColor) ? transOut : _palette32[c];
+		}
+	}
+	w = sw;
+	h = sh;
+	hotX *= kScale;
+	hotY *= kScale;
+	return _cursor;
+}
+
+} // End of namespace Scumm

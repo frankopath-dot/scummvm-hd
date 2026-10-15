@@ -521,6 +521,8 @@ extern const char *const insaneKeymapId;
 /**
  * Base class for all SCUMM engines.
  */
+class HdBackgrounds;
+
 class ScummEngine : public Engine, public Common::Serializable {
 	friend class ScummDebugger;
 	friend class CharsetRenderer;
@@ -1493,6 +1495,12 @@ public:
 protected:
 	// Screen rendering
 	byte *_compositeBuf;
+
+public:
+	/** Experimental HD background renderer (The Dig), see hd_backgrounds.h */
+	HdBackgrounds *_hd = nullptr;
+	void initHdBackgrounds(int width, int height);
+protected:
 	byte *_hercCGAScaleBuf = nullptr;
 	bool _enableEGADithering = false;
 	bool _supportsEGADithering = false;

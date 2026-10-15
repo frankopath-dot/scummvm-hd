@@ -30,6 +30,7 @@
 
 #include "scumm/resource.h"
 #include "scumm/scumm.h"
+#include "scumm/hd_backgrounds.h"
 #include "scumm/scumm_v6.h"
 #include "scumm/scumm_v8.h"
 #include "scumm/util.h"
@@ -644,6 +645,9 @@ void ScummEngine::initCycl(const byte *ptr) {
 				_colorUsedByCycle[i] = 1;
 			}
 		}
+
+		if (_hd)
+			_hd->setCycledColors(_colorUsedByCycle);
 	}
 
 	if (_game.platform == Common::kPlatformAmiga && _game.id == GID_INDY4) {
@@ -1769,7 +1773,10 @@ void ScummEngine::updatePalette() {
 			paletteColors[i] = levels[(paletteColors[i] >> 5) & 0x07];
 	}
 
-	_system->getPaletteManager()->setPalette(paletteColors, first, num);
+	if (_hd)
+		_hd->setPalette(paletteColors, first, num);
+	else
+		_system->getPaletteManager()->setPalette(paletteColors, first, num);
 
 	if (_macGui)
 		_macGui->setPaletteDirty();

@@ -23,6 +23,7 @@ MODULE_OBJS := \
 	gfx_nes.o \
 	gfx_towns.o \
 	gfx.o \
+	hd_backgrounds.o \
 	he/mixer_he.o \
 	he/resource_he.o \
 	he/script_v60he.o \
