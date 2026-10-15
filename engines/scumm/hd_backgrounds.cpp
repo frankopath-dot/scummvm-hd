@@ -25,7 +25,13 @@
 #include "common/file.h"
 #include "common/stream.h"
 #include "common/system.h"
+#include "graphics/yuv_to_rgb.h"
 #include "image/png.h"
+
+#ifdef USE_VPX
+#include <vpx/vpx_decoder.h>
+#include <vpx/vp8dx.h>
+#endif
 
 #include "scumm/hd_backgrounds.h"
 
@@ -79,8 +85,43 @@ void HdBackgrounds::HdImage::free() {
 	w = h = 0;
 }
 
+struct HdBackgrounds::Video {
+	Common::SeekableReadStream *stream = nullptr;
+	int headerSize = 32;
+	int frame = -1;             // last decoded frame
+	bool show = false;          // the decoded frame belongs to the frame on screen
+	Common::Array<bool> noHd;   // frames left to the original pixels
+	Graphics::Surface image;    // last decoded frame in the screen format
+	byte *clean = nullptr;      // the SMUSH frame before text was drawn on it
+	bool haveClean = false;
+	Common::Array<byte> data;
+#ifdef USE_VPX
+	vpx_codec_ctx_t codec;
+	bool codecOk = false;
+
+	bool initCodec() {
+		if (codecOk)
+			vpx_codec_destroy(&codec);
+		vpx_codec_dec_cfg_t cfg = {};
+		cfg.threads = 4;
+		codecOk = vpx_codec_dec_init(&codec, &vpx_codec_vp9_dx_algo, &cfg, 0) == VPX_CODEC_OK;
+		return codecOk;
+	}
+#endif
+
+	~Video() {
+#ifdef USE_VPX
+		if (codecOk)
+			vpx_codec_destroy(&codec);
+#endif
+		delete stream;
+		image.free();
+		delete[] clean;
+	}
+};
+
 HdBackgrounds::HdBackgrounds(OSystem *system, const Common::FSNode &dir, int width, int height)
-	: _system(system), _dir(dir), _w(width), _h(height), _room(-1), _screenRoom(-1), _cursor(nullptr) {
+	: _system(system), _dir(dir), _w(width), _h(height), _room(-1), _screenRoom(-1), _cursor(nullptr), _video(nullptr) {
 	_format = _system->getScreenFormat();
 	_out.create(_w * kScale, _h * kScale, _format);
 	_screen = new byte[_w * _h]();
@@ -99,6 +140,7 @@ HdBackgrounds::HdBackgrounds(OSystem *system, const Common::FSNode &dir, int wid
 }
 
 HdBackgrounds::~HdBackgrounds() {
+	stopVideo();
 	_out.free();
 	_bg.free();
 	clearObjects();
@@ -244,6 +286,119 @@ void HdBackgrounds::blit(const byte *src, int pitch, int x, int y, int w, int h,
 	render(x, y, w, h);
 }
 
+bool HdBackgrounds::startVideo(const char *filename) {
+	stopVideo();
+#ifdef USE_VPX
+	Common::String name(filename);
+	for (const char *sep = "/\\:"; *sep; ++sep) {
+		size_t p = name.findLastOf(*sep);
+		if (p != Common::String::npos)
+			name = name.substr(p + 1);
+	}
+	size_t dot = name.findLastOf('.');
+	if (dot != Common::String::npos)
+		name = name.substr(0, dot);
+	name.toUppercase();
+
+	Common::FSNode dir = _dir.getChild("video");
+	Common::FSNode file = dir.getChild(name + ".ivf");
+	if (!file.exists()) {
+		debug(1, "HD backgrounds: no HD video for %s", name.c_str());
+		return false;
+	}
+	Video *v = new Video();
+	v->stream = file.createReadStream();
+	byte header[32];
+	if (!v->stream || v->stream->read(header, 32) != 32 || memcmp(header, "DKIF", 4) || memcmp(header + 8, "VP90", 4) ||
+			READ_LE_UINT16(header + 12) != _w * kScale || READ_LE_UINT16(header + 14) != _h * kScale || !v->initCodec()) {
+		warning("HD backgrounds: %s is not a %dx%d VP9 IVF file", file.getName().c_str(), _w * kScale, _h * kScale);
+		delete v;
+		return false;
+	}
+	v->headerSize = READ_LE_UINT16(header + 6);
+	v->stream->seek(v->headerSize);
+	v->image.create(_w * kScale, _h * kScale, _format);
+	v->clean = new byte[_w * _h];
+
+	Common::SeekableReadStream *list = dir.getChild(name + ".nohd").createReadStream();
+	if (list) {
+		Common::String text = list->readString(0, list->size());
+		delete list;
+		for (const char *p = text.c_str(); *p; ) {
+			while (*p && !Common::isDigit(*p))
+				++p;
+			if (!*p)
+				break;
+			int n = atoi(p);
+			if (n >= (int)v->noHd.size())
+				v->noHd.resize(n + 1);
+			v->noHd[n] = true;
+			while (Common::isDigit(*p))
+				++p;
+		}
+	}
+	_video = v;
+	debug(1, "HD backgrounds: playing HD video %s", file.getName().c_str());
+	return true;
+#else
+	return false;
+#endif
+}
+
+void HdBackgrounds::stopVideo() {
+	delete _video;
+	_video = nullptr;
+}
+
+void HdBackgrounds::videoClean(const byte *frame, int w, int h) {
+	if (!_video)
+		return;
+	_video->haveClean = w == _w && h == _h;
+	if (_video->haveClean)
+		memcpy(_video->clean, frame, _w * _h);
+}
+
+bool HdBackgrounds::decodeVideoFrame() {
+#ifdef USE_VPX
+	Video *v = _video;
+	byte header[12];
+	if (v->stream->read(header, 12) != 12)
+		return false;
+	uint32 size = READ_LE_UINT32(header);
+	v->data.resize(size);
+	if (v->stream->read(v->data.data(), size) != size ||
+			vpx_codec_decode(&v->codec, v->data.data(), size, nullptr, 0) != VPX_CODEC_OK)
+		return false;
+	vpx_codec_iter_t iter = nullptr;
+	vpx_image_t *img = vpx_codec_get_frame(&v->codec, &iter);
+	if (!img || img->fmt != VPX_IMG_FMT_I420 || (int)img->d_w != v->image.w || (int)img->d_h != v->image.h)
+		return false;
+	YUVToRGBMan.convert420(&v->image, Graphics::YUVToRGBManager::kScaleITU, img->planes[0], img->planes[1], img->planes[2],
+	                       img->d_w, img->d_h, img->stride[0], img->stride[1]);
+	++v->frame;
+	return true;
+#else
+	return false;
+#endif
+}
+
+void HdBackgrounds::videoFrame(int frame) {
+	Video *v = _video;
+	if (!v)
+		return;
+#ifdef USE_VPX
+	if (frame < v->frame) {
+		// Played back from an earlier frame: start decoding over
+		v->stream->seek(v->headerSize);
+		v->initCodec();
+		v->frame = -1;
+	}
+#endif
+	while (v->frame < frame && decodeVideoFrame())
+		;
+	v->show = v->frame == frame && v->haveClean && !(frame < (int)v->noHd.size() && v->noHd[frame]);
+}
+
 // Write the kScale x kScale HD block for image pixel ix, iy if the image has
 // palette index idx there. field points at the smoothed tint of the screen
 // pixel being drawn; the tint is interpolated towards the neighboring pixels'
@@ -343,12 +498,23 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 				smoothTint(x + i - 1, y + j - 1, &_field[j * fieldPitch + i * 3]);
 	}
 
+	const bool video = _video && _video->show;
+	const int videoPitch = video ? _video->image.pitch / 4 : 0;
+
 	for (int j = y; j < y + h; ++j) {
 		for (int i = x; i < x + w; ++i) {
 			const byte idx = _screen[j * _w + i];
+			uint32 *dst = (uint32 *)_out.getBasePtr(i * kScale, j * kScale);
+			if (video && _video->clean[j * _w + i] == idx) {
+				// SMUSH video pixel without text on it: HD video frame
+				const uint32 *vp = (const uint32 *)_video->image.getBasePtr(i * kScale, j * kScale);
+				for (int dy = 0; dy < kScale; ++dy)
+					memcpy(dst + dy * dstPitch, vp + dy * videoPitch, kScale * 4);
+				_why[j * _w + i] = 7;
+				continue;
+			}
 			const int16 rx = _roomPos[(j * _w + i) * 2];
 			const int16 ry = _roomPos[(j * _w + i) * 2 + 1];
-			uint32 *dst = (uint32 *)_out.getBasePtr(i * kScale, j * kScale);
 
 			bool done = false;
 			byte &why = _why[j * _w + i];
@@ -384,14 +550,14 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 		if (f.open(path, true))
 			Image::writePNG(f, _out);
 		// why map: 0 no HD room, 1 not room pixel, 2 color changed, 3 actor/text,
-		// 4 no matching image pixel, 5 HD background, 6 HD object
-		static const byte whyPal[7 * 3] = { 0,0,0, 60,60,60, 255,0,255, 255,0,0, 255,255,0, 0,160,0, 0,120,255 };
+		// 4 no matching image pixel, 5 HD background, 6 HD object, 7 HD video
+		static const byte whyPal[8 * 3] = { 0,0,0, 60,60,60, 255,0,255, 255,0,0, 255,255,0, 0,160,0, 0,120,255, 0,255,255 };
 		Graphics::Surface whySurf;
 		whySurf.init(_w, _h, _w, _why, Graphics::PixelFormat::createFormatCLUT8());
 		Common::DumpFile wf;
 		Common::Path wpath(Common::String::format("%s/why_%03d.png", dumpDir, dumpCount - 1), '/');
 		if (wf.open(wpath, true))
-			Image::writePNG(wf, whySurf, whyPal, 7);
+			Image::writePNG(wf, whySurf, whyPal, 8);
 	}
 }
 

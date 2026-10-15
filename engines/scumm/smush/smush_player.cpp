@@ -433,6 +433,8 @@ void SmushPlayer::handleFetch(int32 subSize, Common::SeekableReadStream &b) {
 
 	if (_frameBuffer != nullptr) {
 		memcpy(_dst, _frameBuffer, _width * _height);
+		if (_vm->_hd)
+			_vm->_hd->videoClean(_dst, _width, _height);
 	}
 }
 
@@ -1022,6 +1024,8 @@ void SmushPlayer::handleFrameObject(int32 subSize, Common::SeekableReadStream &b
 	handleGameFrameObjectPost(codec, chunk_buffer, chunk_size, left, top, width, height);
 
 	decodeFrameObject(codec, chunk_buffer, left, top, width, height, chunk_size);
+	if (_vm->_hd && _dst)
+		_vm->_hd->videoClean(_dst, _width, _height);
 
 	free(chunk_buffer);
 }
@@ -1123,6 +1127,9 @@ void SmushPlayer::handleFrame(int32 frameSize, Common::SeekableReadStream &b) {
 	if (_insanity) {
 		_vm->_insane->procPostRendering(_dst, 0, 0, 0, _frame, _nbframes-1);
 	}
+
+	if (_vm->_hd)
+		_vm->_hd->videoFrame(_frame);
 
 	if (_width != 0 && _height != 0) {
 		updateScreen();
@@ -1441,6 +1448,8 @@ void SmushPlayer::play(const char *filename, int32 speed, int32 offset, int32 st
 
 	setupAnim(filename);
 	init(speed);
+	if (_vm->_hd)
+		_vm->_hd->startVideo(filename);
 	// Callers configure RA1 pre-roll before play(); preserve that target across
 	// init() so the playback loop can rebuild state up to the requested frame.
 	_fastForwardFromFrame = fastForwardFromFrame;
@@ -1608,6 +1617,8 @@ void SmushPlayer::play(const char *filename, int32 speed, int32 offset, int32 st
 			_vm->_system->delayMillis(10);
 	}
 
+	if (_vm->_hd)
+		_vm->_hd->stopVideo();
 	release();
 
 	// Reset mouse state

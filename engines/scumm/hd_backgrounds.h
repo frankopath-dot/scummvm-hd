@@ -68,6 +68,18 @@ public:
 	void blit(const byte *src, int pitch, int x, int y, int w, int h,
 	          int room = -1, int roomX = -1, int roomY = -1, const byte *back = nullptr);
 
+	/**
+	 * SMUSH video replacement: <dir>/video/<NAME>.ivf holds one VP9 frame at
+	 * kScale times the size per FRME chunk of <NAME>.SAN; <NAME>.nohd lists
+	 * frames to leave to the original pixels. Returns whether one was found.
+	 */
+	bool startVideo(const char *filename);
+	void stopVideo();
+	/** The SMUSH player decoded a frame object into frame; text drawn later is not in it. */
+	void videoClean(const byte *frame, int w, int h);
+	/** The SMUSH player finished frame number frame. */
+	void videoFrame(int frame);
+
 	/** Testing aid: room from SCUMMVM_HD_ROOM to jump to, returned once (0: none). */
 	static int takeTestRoom();
 
@@ -99,6 +111,9 @@ private:
 	void scaleIndices(int x, int y, int w, int h);
 	Common::FSNode findRoomFile(const Common::FSNode &dir, int room) const;
 
+	struct Video;
+	bool decodeVideoFrame();
+
 	OSystem *_system;
 	Common::FSNode _dir;
 	int _w, _h;
@@ -123,6 +138,7 @@ private:
 	byte *_cursor;
 	Common::Array<uint16> _field;   // smoothed tints for the area being rendered
 	Common::Array<byte> _scaled1, _scaled2;   // Scale2x / Scale4x palette indices of that area
+	Video *_video;      // active SMUSH replacement, or nullptr
 	byte *_why;         // testing aid: per screen pixel, how it was rendered (see render())
 };
 
