@@ -128,6 +128,9 @@ HdBackgrounds::HdBackgrounds(OSystem *system, const Common::FSNode &dir, int wid
 	_back = new byte[_w * _h]();
 	_why = new byte[_w * _h]();
 	_roomPos = new int16[_w * _h * 2];
+	_ownerIdx = new int32[_w * _h];
+	for (int i = 0; i < _w * _h; ++i)
+		_ownerIdx[i] = -1;
 	for (int i = 0; i < _w * _h * 2; ++i)
 		_roomPos[i] = -1;
 	memset(_palette, 0, sizeof(_palette));
@@ -148,6 +151,9 @@ HdBackgrounds::~HdBackgrounds() {
 	delete[] _back;
 	delete[] _why;
 	delete[] _roomPos;
+	delete[] _ownerIdx;
+	for (HdCel &c : _cels)
+		c.free();
 	delete[] _cursor;
 }
 
@@ -274,7 +280,11 @@ void HdBackgrounds::blit(const byte *src, int pitch, int x, int y, int w, int h,
 	if (room >= 0)
 		_screenRoom = room;
 
+	const bool fromVs = _vsPixels && src >= _vsPixels && src < _vsPixels + _owners.size();
 	for (int j = 0; j < h; ++j) {
+		int32 *oi = _ownerIdx + (y + j) * _w + x;
+		for (int i = 0; i < w; ++i)
+			oi[i] = fromVs ? (int32)(src + j * pitch + i - _vsPixels) : -1;
 		memcpy(_screen + (y + j) * _w + x, src + j * pitch, w);
 		memcpy(_back + (y + j) * _w + x, (back ? back : src) + j * pitch, w);
 		int16 *pos = _roomPos + ((y + j) * _w + x) * 2;
@@ -399,6 +409,106 @@ void HdBackgrounds::videoFrame(int frame) {
 	v->show = v->frame == frame && v->haveClean && !(frame < (int)v->noHd.size() && v->noHd[frame]);
 }
 
+void HdBackgrounds::HdCel::free() {
+	for (Graphics::Surface **sp : { &hd, &orig }) {
+		if (*sp) {
+			(*sp)->free();
+			delete *sp;
+			*sp = nullptr;
+		}
+	}
+}
+
+void HdBackgrounds::setVirtScreen(const byte *pixels, int pitch, int height) {
+	if (pixels == _vsPixels && _owners.size() == (uint)(pitch * height))
+		return;
+	_vsPixels = pixels;
+	_owners.clear();
+	_owners.resize(pitch * height);
+}
+
+uint32 HdBackgrounds::celBegin(int costume, uint32 akcd, bool mirror) {
+	static const uint kMaxCels = 600;   // HD cels are up to a few hundred KB each
+	const uint64 key = ((uint64)costume << 32) | akcd;
+	uint32 slot;
+	if (_celSlots.contains(key)) {
+		slot = _celSlots[key];
+	} else {
+		if (_cels.size() >= kMaxCels) {
+			// Cache full: start over. Owner records of the old cels become invalid through the generation.
+			for (HdCel &c : _cels)
+				c.free();
+			_cels.clear();
+			_celSlots.clear();
+			_celGen = (_celGen + 1) & 0x7FF;
+			if (!_celGen)
+				_celGen = 1;
+		}
+		slot = _cels.size();
+		_cels.push_back(HdCel());
+		_celSlots[key] = slot;
+		HdCel &c = _cels.back();
+		c.gen = _celGen;
+
+		Common::String name = Common::String::format("%08x.png", akcd);
+		Common::FSNode dir = _dir.getChild("costumes");
+		Common::String num = Common::String::format("%d", costume);
+		Common::FSNode hdFile = dir.getChild(num).getChild(name);
+		Common::FSNode origFile = dir.getChild("original").getChild(num).getChild(name);
+		if (hdFile.exists() && origFile.exists()) {
+			for (int k = 0; k < 2; ++k) {
+				Image::PNGDecoder dec;
+				Common::SeekableReadStream *st = (k ? origFile : hdFile).createReadStream();
+				if (st && dec.loadStream(*st) && dec.getSurface())
+					(k ? c.orig : c.hd) = dec.getSurface()->convertTo(Graphics::PixelFormat::createFormatRGBA32(false));
+				delete st;
+			}
+			if (!c.hd || !c.orig || c.hd->w != c.orig->w * kScale || c.hd->h != c.orig->h * kScale) {
+				warning("HD costumes: %d/%s is not %dx its original", costume, name.c_str(), kScale);
+				c.free();
+			}
+		}
+		debug(2, "HD costumes: %d/%s%s", costume, name.c_str(), c.hd ? "" : " (none)");
+	}
+	if (!_cels[slot].hd)
+		return 0;
+	return ((uint32)_cels[slot].gen << 20 | (slot + 1)) | (mirror ? 0x80000000 : 0);
+}
+
+// Draw the HD cel block for a costume pixel over what dst holds (the scenery under it), tinted per
+// channel by the current palette color of the pixel against the cel's original color there.
+bool HdBackgrounds::celBlock(const Owner &o, byte idx, uint32 *dst, int dstPitch) const {
+	const uint32 slot = (o.rec & 0xFFFFF) - 1;
+	if (slot >= _cels.size() || _cels[slot].gen != ((o.rec >> 20) & 0x7FF) || !_cels[slot].hd)
+		return false;
+	const HdCel &c = _cels[slot];
+	if (o.sx >= c.orig->w || o.sy >= c.orig->h)
+		return false;
+	byte oa, orr, og, ob;
+	c.orig->format.colorToARGB(*(const uint32 *)c.orig->getBasePtr(o.sx, o.sy), oa, orr, og, ob);
+	if (!oa || (orr > 200 && og < 60 && ob > 200))   // transparent, or the magenta shadow color
+		return false;
+	const byte *cur = _palette + idx * 3;
+	const uint k[3] = { MIN<uint>((cur[0] + 4) * 256 / (orr + 4), 1024),
+	                    MIN<uint>((cur[1] + 4) * 256 / (og + 4), 1024),
+	                    MIN<uint>((cur[2] + 4) * 256 / (ob + 4), 1024) };
+	const bool mirror = o.rec & 0x80000000;
+	for (int dy = 0; dy < kScale; ++dy) {
+		for (int dx = 0; dx < kScale; ++dx) {
+			const int hx = o.sx * kScale + (mirror ? kScale - 1 - dx : dx), hy = o.sy * kScale + dy;
+			byte a, r, g, b, br, bg, bb;
+			c.hd->format.colorToARGB(*(const uint32 *)c.hd->getBasePtr(hx, hy), a, r, g, b);
+			if (!a)
+				continue;
+			uint32 &d = dst[dy * dstPitch + dx];
+			_format.colorToRGB(d, br, bg, bb);
+			r = MIN<uint>(255, r * k[0] >> 8); g = MIN<uint>(255, g * k[1] >> 8); b = MIN<uint>(255, b * k[2] >> 8);
+			d = _format.RGBToColor((r * a + br * (255 - a)) / 255, (g * a + bg * (255 - a)) / 255, (b * a + bb * (255 - a)) / 255);
+		}
+	}
+	return true;
+}
+
 // Write the kScale x kScale HD block for image pixel ix, iy if the image has
 // palette index idx there. field points at the smoothed tint of the screen
 // pixel being drawn; the tint is interpolated towards the neighboring pixels'
@@ -516,17 +626,36 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 			const int16 rx = _roomPos[(j * _w + i) * 2];
 			const int16 ry = _roomPos[(j * _w + i) * 2 + 1];
 
+			// A costume pixel with an HD cel: draw the scenery under it (the back buffer pixel), then the cel
+			const int32 oi = _ownerIdx[j * _w + i];
+			const Owner *own = nullptr;
+			if (oi >= 0 && _owners[oi].rec && _owners[oi].color == idx && _back[j * _w + i] != idx)
+				own = &_owners[oi];
+			const byte sidx = own ? _back[j * _w + i] : idx;
+
 			bool done = false;
 			byte &why = _why[j * _w + i];
-			why = !haveHd ? 0 : (rx < 0 || ry < 0) ? 1 : !_tintOk[idx] ? 2 : _back[j * _w + i] != idx ? 3 : 4;
+			why = !haveHd ? 0 : (rx < 0 || ry < 0) ? 1 : !_tintOk[sidx] ? 2 : _back[j * _w + i] != sidx ? 3 : 4;
 			if (why == 4) {
 				const uint16 *field = &_field[(j - y + 1) * fieldPitch + (i - x + 1) * 3];
-				done = hdPixel(_bg, rx, ry, idx, field, fieldPitch, dst, dstPitch);
+				done = hdPixel(_bg, rx, ry, sidx, field, fieldPitch, dst, dstPitch);
 				if (done)
 					why = 5;
 				for (int o = _objects.size() - 1; !done && o >= 0; --o)
-					if ((done = hdPixel(_objects[o]->image, rx - _objects[o]->x, ry - _objects[o]->y, idx, field, fieldPitch, dst, dstPitch)))
+					if ((done = hdPixel(_objects[o]->image, rx - _objects[o]->x, ry - _objects[o]->y, sidx, field, fieldPitch, dst, dstPitch)))
 						why = 6;
+			}
+			if (own) {
+				if (!done) {
+					for (int dy = 0; dy < kScale; ++dy)
+						for (int dx = 0; dx < kScale; ++dx)
+							dst[dy * dstPitch + dx] = _palette32[sidx];
+				}
+				if (celBlock(*own, idx, dst, dstPitch)) {
+					why = 8;
+					continue;
+				}
+				done = false;   // no HD pixel there (e.g. a shadow): show the original costume pixel
 			}
 			if (!done) {
 				const byte *s = &_scaled2[(j - y + 2) * kScale * scaledPitch + (i - x + 2) * kScale];
@@ -550,14 +679,14 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 		if (f.open(path, true))
 			Image::writePNG(f, _out);
 		// why map: 0 no HD room, 1 not room pixel, 2 color changed, 3 actor/text,
-		// 4 no matching image pixel, 5 HD background, 6 HD object, 7 HD video
-		static const byte whyPal[8 * 3] = { 0,0,0, 60,60,60, 255,0,255, 255,0,0, 255,255,0, 0,160,0, 0,120,255, 0,255,255 };
+		// 4 no matching image pixel, 5 HD background, 6 HD object, 7 HD video, 8 HD costume
+		static const byte whyPal[9 * 3] = { 0,0,0, 60,60,60, 255,0,255, 255,0,0, 255,255,0, 0,160,0, 0,120,255, 0,255,255, 255,128,0 };
 		Graphics::Surface whySurf;
 		whySurf.init(_w, _h, _w, _why, Graphics::PixelFormat::createFormatCLUT8());
 		Common::DumpFile wf;
 		Common::Path wpath(Common::String::format("%s/why_%03d.png", dumpDir, dumpCount - 1), '/');
 		if (wf.open(wpath, true))
-			Image::writePNG(wf, whySurf, whyPal, 8);
+			Image::writePNG(wf, whySurf, whyPal, 9);
 	}
 }
 

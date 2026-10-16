@@ -24,6 +24,8 @@
 
 #include "common/textconsole.h"
 #include "scumm/base-costume.h"
+#include "scumm/hd_backgrounds.h"
+#include "scumm/scumm.h"
 #include "scumm/util.h"
 
 namespace Scumm {
@@ -219,6 +221,7 @@ byte BaseCostumeRenderer::paintCelByleRLECommon(
 			if (!amiOrPcEngCost && !c64Cost) {
 				compData.skipWidth -= linesToSkip;
 				skipCelLines(compData, linesToSkip);
+				compData.hdCol = linesToSkip;
 				compData.x = compData.boundsRect.left;
 			}
 		} else {
@@ -240,6 +243,7 @@ byte BaseCostumeRenderer::paintCelByleRLECommon(
 			if (!amiOrPcEngCost && !c64Cost) {
 				compData.skipWidth -= linesToSkip;
 				skipCelLines(compData, linesToSkip);
+				compData.hdCol = linesToSkip;
 				compData.x = compData.boundsRect.right - 1;
 			}
 		} else {
@@ -301,6 +305,7 @@ void BaseCostumeRenderer::byleRLEDecode(ByleRLEData &compData, int16 actorHitX, 
 #endif
 	const byte *src = _srcPtr;
 	byte *dst = compData.destPtr;
+	int hdCol = compData.hdCol;   // HD costumes: cel column being decoded
 
 	byte len = compData.repLen;
 	uint16 color = compData.repColor;
@@ -392,6 +397,8 @@ void BaseCostumeRenderer::byleRLEDecode(ByleRLEData &compData, int16 actorHitX, 
 							} else {
 								*dst = pcolor;
 							}
+							if (_hdOwners)
+								_vm->_hd->celPixel(dst, _hdRec, hdCol, _height - height, pcolor);
 						}
 					}
 				}
@@ -403,6 +410,7 @@ void BaseCostumeRenderer::byleRLEDecode(ByleRLEData &compData, int16 actorHitX, 
 				if (!--compData.skipWidth)
 					return;
 				height = _height;
+				hdCol++;
 				y = compData.y;
 
 				scaleIndexY = compData.scaleYIndex;

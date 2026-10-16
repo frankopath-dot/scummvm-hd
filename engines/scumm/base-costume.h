@@ -126,10 +126,15 @@ public:
 		Common::Rect boundsRect;
 		int scaleXIndex, scaleYIndex;
 		int scaleIndexMask;
+		int hdCol = 0;   // cel column the decode starts at (columns skipped by clipping), for HD costumes
 #ifdef SCUMM_OPTIMISED_CODE
 		int scaledHeight;
 #endif
 	};
+
+	// HD costumes (see HdBackgrounds::celBegin): when set, every pixel the decoder writes is reported
+	bool _hdOwners = false;
+	uint32 _hdRec = 0;
 
     BaseCostumeRenderer(ScummEngine *scumm, bool akosRendering = false) {
 		_actorID = 0;

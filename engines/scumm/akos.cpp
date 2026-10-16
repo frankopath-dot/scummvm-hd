@@ -22,6 +22,7 @@
 #include "scumm/scumm.h"
 #include "scumm/actor.h"
 #include "scumm/akos.h"
+#include "scumm/hd_backgrounds.h"
 #include "scumm/bomp.h"
 #include "scumm/imuse_digi/dimuse_engine.h"
 #include "scumm/he/intern_he.h"
@@ -633,7 +634,17 @@ byte AkosRenderer::paintCelByleRLE(int xMoveCur, int yMoveCur) {
 	// The 5th bit is set by ClassicCostumeRenderer so make sure that there's no collision in the shared code
 	assert(!(_shadowMode & 0x20));
 
+	// HD costumes: report the pixels this cel writes to the main virtual screen
+	_hdOwners = _vm->_hd && !_actorHitMode;
+	if (_hdOwners) {
+		const VirtScreen &vs = _vm->_virtscr[kMainVirtScreen];
+		_vm->_hd->setVirtScreen((const byte *)static_cast<const Graphics::Surface &>(vs).getPixels(), vs.pitch, vs.h);
+		const Actor *a = _vm->derefActor(_actorID, "paintCelByleRLE");
+		_hdRec = _vm->_hd->celBegin(a->_costume, (uint32)(_srcPtr - _akcd), !_drawActorToRight);
+	}
+
 	byleRLEDecode(compData, _actorHitX, _actorHitY, _actorHitMode ? &_actorHitResult : nullptr, _xmap);
+	_hdOwners = false;
 
 	return drawFlag;
 }

@@ -24,6 +24,7 @@
 
 #include "common/array.h"
 #include "common/fs.h"
+#include "common/hashmap.h"
 #include "graphics/surface.h"
 
 class OSystem;
@@ -80,6 +81,27 @@ public:
 	/** The SMUSH player finished frame number frame. */
 	void videoFrame(int frame);
 
+	/**
+	 * HD costumes. <dir>/costumes/<costume>/<akcd>.png is a cel at kScale times its size (RGBA) and
+	 * <dir>/costumes/original/<costume>/<akcd>.png the RGBA cel it was made from, where <akcd> is the
+	 * cel's AKCD data offset as 8 hex digits. While a cel is decoded, the costume renderer reports each
+	 * pixel it writes to the main virtual screen (celPixel); pixels on screen that still have that color
+	 * are then drawn from the HD cel, tinted by how far the palette color is from the cel's original color.
+	 */
+	void setVirtScreen(const byte *pixels, int pitch, int height);
+	/** A cel is about to be drawn; returns the id to pass to celPixel (0: no HD cel). */
+	uint32 celBegin(int costume, uint32 akcd, bool mirror);
+	void celPixel(const byte *dst, uint32 rec, int sx, int sy, byte color) {
+		const ptrdiff_t i = dst - _vsPixels;
+		if (i < 0 || i >= (ptrdiff_t)_owners.size())
+			return;
+		Owner &o = _owners[i];
+		o.rec = rec;
+		o.sx = sx;
+		o.sy = sy;
+		o.color = color;
+	}
+
 	/** Testing aid: room from SCUMMVM_HD_ROOM to jump to, returned once (0: none). */
 	static int takeTestRoom();
 
@@ -112,6 +134,21 @@ private:
 	Common::FSNode findRoomFile(const Common::FSNode &dir, int room) const;
 
 	struct Video;
+
+	/** A loaded HD cel with the original RGBA cel it was made from. */
+	struct HdCel {
+		Graphics::Surface *hd = nullptr;
+		Graphics::Surface *orig = nullptr;
+		uint16 gen = 0;
+		void free();
+	};
+	/** Who drew a virtual screen pixel: cel record (0: none), cel pixel and color written. */
+	struct Owner {
+		uint32 rec = 0;
+		uint16 sx = 0, sy = 0;
+		byte color = 0;
+	};
+	bool celBlock(const Owner &o, byte idx, uint32 *dst, int dstPitch) const;
 	bool decodeVideoFrame();
 
 	OSystem *_system;
@@ -139,6 +176,13 @@ private:
 	Common::Array<uint16> _field;   // smoothed tints for the area being rendered
 	Common::Array<byte> _scaled1, _scaled2;   // Scale2x / Scale4x palette indices of that area
 	Video *_video;      // active SMUSH replacement, or nullptr
+
+	const byte *_vsPixels = nullptr;   // main virtual screen pixels the owner map refers to
+	Common::Array<Owner> _owners;      // per main virtual screen pixel
+	int32 *_ownerIdx;                  // per screen pixel: index into _owners (-1: not from the main virtscreen)
+	Common::Array<HdCel> _cels;        // HD cel cache; a record id is (gen << 20 | slot + 1) | mirror << 31
+	Common::HashMap<uint64, uint32> _celSlots;   // costume << 32 | akcd -> slot
+	uint16 _celGen = 1;
 	byte *_why;         // testing aid: per screen pixel, how it was rendered (see render())
 };
 
