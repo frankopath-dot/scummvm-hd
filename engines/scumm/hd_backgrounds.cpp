@@ -475,19 +475,37 @@ uint32 HdBackgrounds::celBegin(int costume, uint32 akcd, bool mirror) {
 	return ((uint32)_cels[slot].gen << 20 | (slot + 1)) | (mirror ? 0x80000000 : 0);
 }
 
-// Draw the HD cel block for a costume pixel over what dst holds (the scenery under it), tinted per
-// channel by the current palette color of the pixel against the cel's original color there.
-bool HdBackgrounds::celBlock(const Owner &o, byte idx, uint32 *dst, int dstPitch) const {
+const HdBackgrounds::Owner *HdBackgrounds::validOwner(int i, int j) const {
+	if (i < 0 || j < 0 || i >= _w || j >= _h)
+		return nullptr;
+	const int32 oi = _ownerIdx[j * _w + i];
+	const byte idx = _screen[j * _w + i];
+	if (oi < 0 || !_owners[oi].rec || _owners[oi].color != idx || _back[j * _w + i] == idx)
+		return nullptr;
+	return &_owners[oi];
+}
+
+// Draw the HD block for cel pixel sx, sy over what dst holds (the scenery under it), tinted per channel by
+// the current palette color idx against the cel's original color at the owner's pixel. With edge set, sx, sy
+// is just outside the original cel's shape (a neighbor of a costume pixel): only the HD cel's soft edge
+// spilling there is drawn, so the silhouette isn't cut along the original pixels.
+bool HdBackgrounds::celBlock(const Owner &o, int sx, int sy, byte idx, bool edge, uint32 *dst, int dstPitch) const {
 	const uint32 slot = (o.rec & 0xFFFFF) - 1;
 	if (slot >= _cels.size() || _cels[slot].gen != ((o.rec >> 20) & 0x7FF) || !_cels[slot].hd)
 		return false;
 	const HdCel &c = _cels[slot];
-	if (o.sx >= c.orig->w || o.sy >= c.orig->h)
+	if (o.sx >= c.orig->w || o.sy >= c.orig->h || sx < 0 || sy < 0 || sx >= c.orig->w || sy >= c.orig->h)
 		return false;
 	byte oa, orr, og, ob;
 	c.orig->format.colorToARGB(*(const uint32 *)c.orig->getBasePtr(o.sx, o.sy), oa, orr, og, ob);
 	if (!oa || (orr > 200 && og < 60 && ob > 200))   // transparent, or the magenta shadow color
 		return false;
+	if (edge) {
+		byte ea, er, eg, eb;
+		c.orig->format.colorToARGB(*(const uint32 *)c.orig->getBasePtr(sx, sy), ea, er, eg, eb);
+		if (ea)   // inside the original shape: that pixel is drawn by its own owner, or covered by something else
+			return false;
+	}
 	const byte *cur = _palette + idx * 3;
 	const uint k[3] = { MIN<uint>((cur[0] + 4) * 256 / (orr + 4), 1024),
 	                    MIN<uint>((cur[1] + 4) * 256 / (og + 4), 1024),
@@ -495,7 +513,7 @@ bool HdBackgrounds::celBlock(const Owner &o, byte idx, uint32 *dst, int dstPitch
 	const bool mirror = o.rec & 0x80000000;
 	for (int dy = 0; dy < kScale; ++dy) {
 		for (int dx = 0; dx < kScale; ++dx) {
-			const int hx = o.sx * kScale + (mirror ? kScale - 1 - dx : dx), hy = o.sy * kScale + dy;
+			const int hx = sx * kScale + (mirror ? kScale - 1 - dx : dx), hy = sy * kScale + dy;
 			byte a, r, g, b, br, bg, bb;
 			c.hd->format.colorToARGB(*(const uint32 *)c.hd->getBasePtr(hx, hy), a, r, g, b);
 			if (!a)
@@ -627,10 +645,7 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 			const int16 ry = _roomPos[(j * _w + i) * 2 + 1];
 
 			// A costume pixel with an HD cel: draw the scenery under it (the back buffer pixel), then the cel
-			const int32 oi = _ownerIdx[j * _w + i];
-			const Owner *own = nullptr;
-			if (oi >= 0 && _owners[oi].rec && _owners[oi].color == idx && _back[j * _w + i] != idx)
-				own = &_owners[oi];
+			const Owner *own = validOwner(i, j);
 			const byte sidx = own ? _back[j * _w + i] : idx;
 
 			bool done = false;
@@ -651,7 +666,7 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 						for (int dx = 0; dx < kScale; ++dx)
 							dst[dy * dstPitch + dx] = _palette32[sidx];
 				}
-				if (celBlock(*own, idx, dst, dstPitch)) {
+				if (celBlock(*own, own->sx, own->sy, idx, false, dst, dstPitch)) {
 					why = 8;
 					continue;
 				}
@@ -662,6 +677,19 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 				for (int dy = 0; dy < kScale; ++dy)
 					for (int dx = 0; dx < kScale; ++dx)
 						dst[dy * dstPitch + dx] = _palette32[s[dy * scaledPitch + dx]];
+			}
+			// Scenery next to an HD costume pixel: let the HD cel's soft edge spill over it
+			if (!own && _back[j * _w + i] == idx) {
+				static const int nb[4][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
+				for (int n = 0; n < 4; ++n) {
+					const Owner *o = validOwner(i + nb[n][0], j + nb[n][1]);
+					if (!o)
+						continue;
+					// this pixel is one cel pixel away from the owner's, the other way round if mirrored
+					const int ddx = -nb[n][0] * ((o->rec & 0x80000000) ? -1 : 1), ddy = -nb[n][1];
+					if (celBlock(*o, o->sx + ddx, o->sy + ddy, _screen[(j + nb[n][1]) * _w + i + nb[n][0]], true, dst, dstPitch))
+						break;
+				}
 			}
 		}
 	}

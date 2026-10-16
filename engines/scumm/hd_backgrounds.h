@@ -148,7 +148,8 @@ private:
 		uint16 sx = 0, sy = 0;
 		byte color = 0;
 	};
-	bool celBlock(const Owner &o, byte idx, uint32 *dst, int dstPitch) const;
+	bool celBlock(const Owner &o, int sx, int sy, byte idx, bool edge, uint32 *dst, int dstPitch) const;
+	const Owner *validOwner(int i, int j) const;
 	bool decodeVideoFrame();
 
 	OSystem *_system;
