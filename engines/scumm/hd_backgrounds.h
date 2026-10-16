@@ -104,6 +104,8 @@ public:
 
 	/** Testing aid: room from SCUMMVM_HD_ROOM to jump to, returned once (0: none). */
 	static int takeTestRoom();
+	/** Testing aid: costume from SCUMMVM_HD_COSTUME for the player after a SCUMMVM_HD_ROOM jump (0: none). */
+	static int testCostume();
 
 	/** Convert an 8-bit cursor to an enlarged cursor in the screen format. */
 	const byte *convertCursor(const byte *src, int &w, int &h, int &hotX, int &hotY, byte transColor, uint32 &transOut);

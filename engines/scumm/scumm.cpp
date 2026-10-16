@@ -3108,6 +3108,10 @@ void ScummEngine::scummLoop(int delta) {
 			_actors[VAR(VAR_EGO)]->_room = room;
 			_sound->stopAllSounds();
 			startScene(room, nullptr, 0);
+			// SCUMMVM_HD_COSTUME=<n>: also dress the player in costume n (e.g. 14, Boston Low without his suit)
+			const int costume = HdBackgrounds::testCostume();
+			if (costume > 0)
+				_actors[VAR(VAR_EGO)]->setActorCostume(costume);
 			_fullRedraw = true;
 		}
 	}

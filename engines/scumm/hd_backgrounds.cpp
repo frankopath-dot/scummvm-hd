@@ -498,7 +498,7 @@ bool HdBackgrounds::celBlock(const Owner &o, int sx, int sy, byte idx, bool edge
 		return false;
 	byte oa, orr, og, ob;
 	c.orig->format.colorToARGB(*(const uint32 *)c.orig->getBasePtr(o.sx, o.sy), oa, orr, og, ob);
-	if (!oa || (orr > 200 && og < 60 && ob > 200))   // transparent, or the magenta shadow color
+	if (!oa || (orr > 200 && ob > 200 && og < 128))   // transparent, or the magenta shadow color (255, 87, 255)
 		return false;
 	if (edge) {
 		byte ea, er, eg, eb;
@@ -725,6 +725,11 @@ int HdBackgrounds::takeTestRoom() {
 		return 0;
 	taken = true;
 	return atoi(room);
+}
+
+int HdBackgrounds::testCostume() {
+	const char *costume = getenv("SCUMMVM_HD_COSTUME");
+	return costume ? atoi(costume) : 0;
 }
 
 const byte *HdBackgrounds::convertCursor(const byte *src, int &w, int &h, int &hotX, int &hotY, byte transColor, uint32 &transOut) {
