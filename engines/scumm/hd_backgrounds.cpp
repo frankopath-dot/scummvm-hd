@@ -460,7 +460,7 @@ uint32 HdBackgrounds::celBegin(int costume, uint32 akcd, bool mirror) {
 				Image::PNGDecoder dec;
 				Common::SeekableReadStream *st = (k ? origFile : hdFile).createReadStream();
 				if (st && dec.loadStream(*st) && dec.getSurface())
-					(k ? c.orig : c.hd) = dec.getSurface()->convertTo(Graphics::PixelFormat::createFormatRGBA32(false));
+					(k ? c.orig : c.hd) = dec.getSurface()->convertTo(Graphics::PixelFormat::createFormatRGBA32(true));
 				delete st;
 			}
 			if (!c.hd || !c.orig || c.hd->w != c.orig->w * kScale || c.hd->h != c.orig->h * kScale) {
