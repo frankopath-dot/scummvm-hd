@@ -3115,6 +3115,29 @@ void ScummEngine::scummLoop(int delta) {
 			_fullRedraw = true;
 		}
 	}
+	// SCUMMVM_HD_WALK=1 (with SCUMMVM_HD_ROOM): every 4 s the player walks to a random spot, every third
+	// time he stands and plays his talk animation instead, to see walking and talking frames.
+	if (_hd && HdBackgrounds::testWalkRoom() == _currentRoom) {
+		static uint32 next = 0;
+		static int step = 0;
+		const uint32 now = _system->getMillis();
+		if (next == 0)
+			next = now + 4000;
+		if (now >= next) {
+			next = now + 4000;
+			Actor *ego = _actors[VAR(VAR_EGO)];
+			if (step % 3 == 2) {
+				ego->stopActorMoving();
+				ego->startAnimActor(ego->_talkStartFrame);
+			} else {
+				if (step % 3 == 0)
+					ego->startAnimActor(ego->_talkStopFrame);
+				ego->startWalkActor(_rnd.getRandomNumberRng(40, MAX(41, _roomWidth - 40)),
+				                    _rnd.getRandomNumberRng(_roomHeight / 2, _roomHeight - 10), -1);
+			}
+			step++;
+		}
+	}
 
 	// Notify the script about how much time has passed, in jiffies
 	if (VAR_TIMER != 0xFF)

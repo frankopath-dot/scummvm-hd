@@ -128,9 +128,7 @@ HdBackgrounds::HdBackgrounds(OSystem *system, const Common::FSNode &dir, int wid
 	_back = new byte[_w * _h]();
 	_why = new byte[_w * _h]();
 	_roomPos = new int16[_w * _h * 2];
-	_ownerIdx = new int32[_w * _h];
-	for (int i = 0; i < _w * _h; ++i)
-		_ownerIdx[i] = -1;
+	_screenOwners.resize(_w * _h);
 	for (int i = 0; i < _w * _h * 2; ++i)
 		_roomPos[i] = -1;
 	memset(_palette, 0, sizeof(_palette));
@@ -151,7 +149,6 @@ HdBackgrounds::~HdBackgrounds() {
 	delete[] _back;
 	delete[] _why;
 	delete[] _roomPos;
-	delete[] _ownerIdx;
 	for (HdCel &c : _cels)
 		c.free();
 	delete[] _cursor;
@@ -280,11 +277,14 @@ void HdBackgrounds::blit(const byte *src, int pitch, int x, int y, int w, int h,
 	if (room >= 0)
 		_screenRoom = room;
 
+	// The owners are copied along with the pixels: the game may draw the next frame's actors on the virtual
+	// screen before the screen is rendered again (a palette cycle re-renders it all), so the live owners
+	// can be newer than the screen pixels.
 	const bool fromVs = _vsPixels && src >= _vsPixels && src < _vsPixels + _owners.size();
 	for (int j = 0; j < h; ++j) {
-		int32 *oi = _ownerIdx + (y + j) * _w + x;
+		Owner *so = &_screenOwners[(y + j) * _w + x];
 		for (int i = 0; i < w; ++i)
-			oi[i] = fromVs ? (int32)(src + j * pitch + i - _vsPixels) : -1;
+			so[i] = fromVs ? _owners[src + j * pitch + i - _vsPixels] : Owner();
 		memcpy(_screen + (y + j) * _w + x, src + j * pitch, w);
 		memcpy(_back + (y + j) * _w + x, (back ? back : src) + j * pitch, w);
 		int16 *pos = _roomPos + ((y + j) * _w + x) * 2;
@@ -478,11 +478,11 @@ uint32 HdBackgrounds::celBegin(int costume, uint32 akcd, bool mirror) {
 const HdBackgrounds::Owner *HdBackgrounds::validOwner(int i, int j) const {
 	if (i < 0 || j < 0 || i >= _w || j >= _h)
 		return nullptr;
-	const int32 oi = _ownerIdx[j * _w + i];
+	const Owner &o = _screenOwners[j * _w + i];
 	const byte idx = _screen[j * _w + i];
-	if (oi < 0 || !_owners[oi].rec || _owners[oi].color != idx || _back[j * _w + i] == idx)
+	if (!o.rec || o.color != idx || _back[j * _w + i] == idx)
 		return nullptr;
-	return &_owners[oi];
+	return &o;
 }
 
 // Draw the HD block for cel pixel sx, sy over what dst holds (the scenery under it), tinted per channel by
@@ -696,11 +696,12 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 	_system->copyRectToScreen(_out.getBasePtr(x * kScale, y * kScale), _out.pitch,
 	                          x * kScale, y * kScale, w * kScale, h * kScale);
 
-	// Testing aid: SCUMMVM_HD_DUMP=<dir> saves the full frame every 3 seconds.
+	// Testing aid: SCUMMVM_HD_DUMP=<dir> saves the full frame every 3 seconds (SCUMMVM_HD_DUMP_MS: other interval).
 	static const char *dumpDir = getenv("SCUMMVM_HD_DUMP");
 	static uint32 lastDump = 0;
 	static int dumpCount = 0;
-	if (dumpDir && _system->getMillis() - lastDump > 3000) {
+	static const uint32 dumpMs = getenv("SCUMMVM_HD_DUMP_MS") ? atoi(getenv("SCUMMVM_HD_DUMP_MS")) : 3000;
+	if (dumpDir && _system->getMillis() - lastDump > dumpMs) {
 		lastDump = _system->getMillis();
 		Common::DumpFile f;
 		Common::Path path(Common::String::format("%s/frame_%03d.png", dumpDir, dumpCount++), '/');
@@ -730,6 +731,11 @@ int HdBackgrounds::takeTestRoom() {
 int HdBackgrounds::testCostume() {
 	const char *costume = getenv("SCUMMVM_HD_COSTUME");
 	return costume ? atoi(costume) : 0;
+}
+
+int HdBackgrounds::testWalkRoom() {
+	static const int room = getenv("SCUMMVM_HD_WALK") && getenv("SCUMMVM_HD_ROOM") ? atoi(getenv("SCUMMVM_HD_ROOM")) : -1;
+	return room;
 }
 
 const byte *HdBackgrounds::convertCursor(const byte *src, int &w, int &h, int &hotX, int &hotY, byte transColor, uint32 &transOut) {

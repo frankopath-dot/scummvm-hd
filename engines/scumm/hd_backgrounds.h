@@ -106,6 +106,8 @@ public:
 	static int takeTestRoom();
 	/** Testing aid: costume from SCUMMVM_HD_COSTUME for the player after a SCUMMVM_HD_ROOM jump (0: none). */
 	static int testCostume();
+	/** Testing aid: the SCUMMVM_HD_ROOM room when SCUMMVM_HD_WALK is set, else -1. */
+	static int testWalkRoom();
 
 	/** Convert an 8-bit cursor to an enlarged cursor in the screen format. */
 	const byte *convertCursor(const byte *src, int &w, int &h, int &hotX, int &hotY, byte transColor, uint32 &transOut);
@@ -182,7 +184,7 @@ private:
 
 	const byte *_vsPixels = nullptr;   // main virtual screen pixels the owner map refers to
 	Common::Array<Owner> _owners;      // per main virtual screen pixel
-	int32 *_ownerIdx;                  // per screen pixel: index into _owners (-1: not from the main virtscreen)
+	Common::Array<Owner> _screenOwners;   // per screen pixel: its owner when it was copied to the screen (rec 0: none)
 	Common::Array<HdCel> _cels;        // HD cel cache; a record id is (gen << 20 | slot + 1) | mirror << 31
 	Common::HashMap<uint64, uint32> _celSlots;   // costume << 32 | akcd -> slot
 	uint16 _celGen = 1;
