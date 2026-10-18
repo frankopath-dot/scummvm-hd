@@ -280,11 +280,15 @@ void HdBackgrounds::blit(const byte *src, int pitch, int x, int y, int w, int h,
 	// The owners are copied along with the pixels: the game may draw the next frame's actors on the virtual
 	// screen before the screen is rendered again (a palette cycle re-renders it all), so the live owners
 	// can be newer than the screen pixels.
+	// The rectangle can run past the end of the owner map (the virtual screen was resized since the owners were
+	// set up, e.g. during a fade after a cutscene), so each pixel is checked.
 	const bool fromVs = _vsPixels && src >= _vsPixels && src < _vsPixels + _owners.size();
 	for (int j = 0; j < h; ++j) {
 		Owner *so = &_screenOwners[(y + j) * _w + x];
-		for (int i = 0; i < w; ++i)
-			so[i] = fromVs ? _owners[src + j * pitch + i - _vsPixels] : Owner();
+		for (int i = 0; i < w; ++i) {
+			const size_t off = fromVs ? (size_t)(src + j * pitch + i - _vsPixels) : _owners.size();
+			so[i] = off < _owners.size() ? _owners[off] : Owner();
+		}
 		memcpy(_screen + (y + j) * _w + x, src + j * pitch, w);
 		memcpy(_back + (y + j) * _w + x, (back ? back : src) + j * pitch, w);
 		int16 *pos = _roomPos + ((y + j) * _w + x) * 2;
@@ -470,6 +474,7 @@ uint32 HdBackgrounds::celBegin(int costume, uint32 akcd, bool mirror) {
 		}
 		debug(2, "HD costumes: %d/%s%s", costume, name.c_str(), c.hd ? "" : " (none)");
 	}
+	debug(3, "HD cel draw %d/%08x", costume, akcd);
 	if (!_cels[slot].hd)
 		return 0;
 	return ((uint32)_cels[slot].gen << 20 | (slot + 1)) | (mirror ? 0x80000000 : 0);
@@ -707,6 +712,7 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 		Common::Path path(Common::String::format("%s/frame_%03d.png", dumpDir, dumpCount++), '/');
 		if (f.open(path, true))
 			Image::writePNG(f, _out);
+		debug(3, "HD dump frame_%03d", dumpCount - 1);
 		// why map: 0 no HD room, 1 not room pixel, 2 color changed, 3 actor/text,
 		// 4 no matching image pixel, 5 HD background, 6 HD object, 7 HD video, 8 HD costume
 		static const byte whyPal[9 * 3] = { 0,0,0, 60,60,60, 255,0,255, 255,0,0, 255,255,0, 0,160,0, 0,120,255, 0,255,255, 255,128,0 };
