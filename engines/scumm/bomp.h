@@ -54,6 +54,11 @@ struct BompDrawData {
 	uint16 *actorPalette;
 
 	bool mirror;
+
+	// HD costumes: when set, called for every pixel an unscaled draw writes, with its column and row in the
+	// (unmirrored) source image and the color written
+	void (*hdPixel)(void *ctx, byte *dst, int col, int row, byte color) = nullptr;
+	void *hdCtx = nullptr;
 };
 
 void drawBomp(const BompDrawData &bd);

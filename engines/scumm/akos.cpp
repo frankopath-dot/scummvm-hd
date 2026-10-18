@@ -680,6 +680,11 @@ void AkosRenderer::markAsDirty(const Common::Rect &rect, ByleRLEData &compData, 
 	}
 }
 
+void AkosRenderer::hdBompPixel(void *ctx, byte *dst, int col, int row, byte color) {
+	AkosRenderer *r = (AkosRenderer *)ctx;
+	r->_vm->_hd->celPixel(dst, r->_hdRec, col, row, color);
+}
+
 byte AkosRenderer::paintCelCDATRLE(int xmoveCur, int ymoveCur) {
 	Common::Rect clip;
 	int32 maxw, maxh;
@@ -739,6 +744,16 @@ byte AkosRenderer::paintCelCDATRLE(int xmoveCur, int ymoveCur) {
 	bdd.actorPalette = _useBompPalette ? _palette : nullptr;
 
 	bdd.mirror = !_drawActorToRight;
+
+	// HD costumes: report the pixels this cel writes to the main virtual screen, as paintCelByleRLE does
+	if (_vm->_hd) {
+		const VirtScreen &vs = _vm->_virtscr[kMainVirtScreen];
+		_vm->_hd->setVirtScreen((const byte *)static_cast<const Graphics::Surface &>(vs).getPixels(), vs.pitch, vs.h);
+		const Actor *a = _vm->derefActor(_actorID, "paintCelCDATRLE");
+		_hdRec = _vm->_hd->celBegin(a->_costume, (uint32)(_srcPtr - _akcd), !_drawActorToRight);
+		bdd.hdPixel = hdBompPixel;
+		bdd.hdCtx = this;
+	}
 
 	drawBomp(bdd);
 

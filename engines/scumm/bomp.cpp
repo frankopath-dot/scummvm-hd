@@ -286,6 +286,8 @@ void drawBomp(const BompDrawData &bd) {
 	byte line_buffer[1024];
 
 	byte *line_ptr = line_buffer + clip.left;
+	const bool hd = bd.hdPixel && bd.scale_x == 255;
+	int srcRow = -1;
 
 	// Loop over all lines
 	while (pos_y < clip.bottom) {
@@ -295,6 +297,7 @@ void drawBomp(const BompDrawData &bd) {
 		else
 			bompDecodeLine(line_buffer, src + 2, bd.srcwidth);
 		src += READ_LE_UINT16(src) + 2;
+		srcRow++;
 
 		// If vertical scaling is enabled, do it
 		if (bd.scale_y != 255) {
@@ -333,6 +336,15 @@ void drawBomp(const BompDrawData &bd) {
 			// Finally, draw the decoded, scaled, masked and recolored line onto
 			// the target surface, using the specified shadow mode
 			bompApplyShadow(bd.shadowMode, bd.shadowPalette, line_ptr, dst, width, 255);
+
+			if (hd) {
+				for (int i = 0; i < width; ++i) {
+					if (line_ptr[i] == 255)
+						continue;
+					const int k = clip.left + i;
+					bd.hdPixel(bd.hdCtx, dst + i, bd.mirror ? bd.srcwidth - 1 - k : k, srcRow, dst[i]);
+				}
+			}
 		}
 
 		// Advance to the next line
