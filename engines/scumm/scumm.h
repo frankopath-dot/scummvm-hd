@@ -1499,6 +1499,7 @@ protected:
 public:
 	/** Experimental HD background renderer (The Dig), see hd_backgrounds.h */
 	HdBackgrounds *_hd = nullptr;
+	int _hdStateLoops = 0;   // testing aid: loops left to apply SCUMMVM_HD_STATE
 	void initHdBackgrounds(int width, int height);
 protected:
 	byte *_hercCGAScaleBuf = nullptr;

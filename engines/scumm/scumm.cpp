@@ -3113,8 +3113,33 @@ void ScummEngine::scummLoop(int delta) {
 			if (costume > 0)
 				_actors[VAR(VAR_EGO)]->setActorCostume(costume);
 			_fullRedraw = true;
+			_hdStateLoops = 100;
 		}
 	}
+	// SCUMMVM_HD_STATE=<obj>:<state>,... (with SCUMMVM_HD_ROOM): set object states, to see the HD images of
+	// later states. Applied for a while after the jump, as the room's entry script may set them back.
+	if (_hdStateLoops > 0) {
+		if (const char *states = HdBackgrounds::testStates()) {
+			for (const char *p = states; *p; ) {
+				const int obj = atoi(p);
+				const char *colon = strchr(p, ':');
+				if (!colon)
+					break;
+				if (getState(obj) != atoi(colon + 1)) {
+					putState(obj, atoi(colon + 1));
+					updateObjectStates();
+					markObjectRectAsDirty(obj);
+					_fullRedraw = true;
+				}
+				const char *comma = strchr(colon, ',');
+				p = comma ? comma + 1 : colon + strlen(colon);
+			}
+		}
+		--_hdStateLoops;
+	}
+	// SCUMMVM_HD_CAMX=<x> (with SCUMMVM_HD_ROOM): keep the camera there, for parts of wide rooms
+	if (_hd && HdBackgrounds::testWalkRoom() < 0 && HdBackgrounds::testCameraX() >= 0 && _hdStateLoops < 100)
+		setCameraAt(HdBackgrounds::testCameraX(), camera._cur.y);
 	// SCUMMVM_HD_WALK=1 (with SCUMMVM_HD_ROOM): every 4 s the player walks to a random spot, every third
 	// time he stands and plays his talk animation instead, to see walking and talking frames.
 	if (_hd && HdBackgrounds::testWalkRoom() == _currentRoom) {

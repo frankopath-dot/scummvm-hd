@@ -106,6 +106,8 @@ public:
 	static int takeTestRoom();
 	/** Testing aid: costume from SCUMMVM_HD_COSTUME for the player after a SCUMMVM_HD_ROOM jump (0: none). */
 	static int testCostume();
+	static const char *testStates();   // SCUMMVM_HD_STATE=<obj>:<state>,... or nullptr
+	static int testCameraX();          // SCUMMVM_HD_CAMX, or -1
 	/** Testing aid: the SCUMMVM_HD_ROOM room when SCUMMVM_HD_WALK is set, else -1. */
 	static int testWalkRoom();
 

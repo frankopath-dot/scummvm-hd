@@ -658,12 +658,14 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 			why = !haveHd ? 0 : (rx < 0 || ry < 0) ? 1 : !_tintOk[sidx] ? 2 : _back[j * _w + i] != sidx ? 3 : 4;
 			if (why == 4) {
 				const uint16 *field = &_field[(j - y + 1) * fieldPitch + (i - x + 1) * 3];
-				done = hdPixel(_bg, rx, ry, sidx, field, fieldPitch, dst, dstPitch);
-				if (done)
-					why = 5;
+				// Objects first: where an object image covers the room, its pixels can share palette indices
+				// with the room image under it, and the HD room (which shows the room's original content
+				// there) would turn the object into a mosaic of both.
 				for (int o = _objects.size() - 1; !done && o >= 0; --o)
 					if ((done = hdPixel(_objects[o]->image, rx - _objects[o]->x, ry - _objects[o]->y, sidx, field, fieldPitch, dst, dstPitch)))
 						why = 6;
+				if (!done && (done = hdPixel(_bg, rx, ry, sidx, field, fieldPitch, dst, dstPitch)))
+					why = 5;
 			}
 			if (own) {
 				if (!done) {
@@ -732,6 +734,15 @@ int HdBackgrounds::takeTestRoom() {
 		return 0;
 	taken = true;
 	return atoi(room);
+}
+
+const char *HdBackgrounds::testStates() {
+	return getenv("SCUMMVM_HD_STATE");
+}
+
+int HdBackgrounds::testCameraX() {
+	static const int x = getenv("SCUMMVM_HD_CAMX") ? atoi(getenv("SCUMMVM_HD_CAMX")) : -1;
+	return x;
 }
 
 int HdBackgrounds::testCostume() {
