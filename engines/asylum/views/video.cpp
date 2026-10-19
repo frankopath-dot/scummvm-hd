@@ -174,11 +174,16 @@ void VideoPlayer::play(uint32 videoNumber, EventHandler *handler) {
 }
 
 void VideoPlayer::play(const Common::Path &filename, bool showSubtitles) {
-	if (!_decoder->loadFile(filename))
+	// HD replacement movies keep the original's aspect, at a higher resolution
+	Common::SeekableReadStream *hdStream = getScreen()->isHd() ? getScreen()->hd()->openVideo(filename.baseName()) : nullptr;
+	bool hdMovie = hdStream && _decoder->loadStream(hdStream);
+	if (!hdMovie && !_decoder->loadFile(filename))
 		error("[Video::playVideo] Invalid video index (%d)", _currentMovie);
 
-	int16 x = (int16)Common::Rational(640 - _decoder->getWidth(),  2).toInt();
-	int16 y = (int16)Common::Rational(480 - _decoder->getHeight(), 2).toInt();
+	int16 width  = (int16)(hdMovie ? 640 : _decoder->getWidth());
+	int16 height = (int16)(hdMovie ? _decoder->getHeight() * 640 / _decoder->getWidth() : _decoder->getHeight());
+	int16 x = (int16)Common::Rational(640 - width,  2).toInt();
+	int16 y = (int16)Common::Rational(480 - height, 2).toInt();
 
 	getScreen()->clear();
 
@@ -217,7 +222,10 @@ void VideoPlayer::play(const Common::Path &filename, bool showSubtitles) {
 				continue;
 
 			if (getScreen()->isHd() && (_vm->checkGameVersion("Steam") || _vm->isAltDemo())) {
-				getScreen()->hd()->copyScaled(*frame, x, y);
+				if (hdMovie)
+					getScreen()->hd()->copyFitted(*frame, Common::Rect(x, y, x + width, y + height));
+				else
+					getScreen()->hd()->copyScaled(*frame, x, y);
 			} else if (_vm->checkGameVersion("Steam") || _vm->isAltDemo()) {
 				g_system->copyRectToScreen((const byte *)frame->getPixels(), frame->pitch, x, y, frame->w, frame->h);
 			} else {

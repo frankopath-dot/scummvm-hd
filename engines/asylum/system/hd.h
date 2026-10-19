@@ -26,6 +26,7 @@
 #include "common/fs.h"
 #include "common/hashmap.h"
 #include "common/rect.h"
+#include "common/stream.h"
 #include "graphics/pixelformat.h"
 #include "graphics/surface.h"
 
@@ -71,6 +72,12 @@ public:
 	void paletteChanged(const byte *palette);
 	void fillScreen(const Common::Rect &rect, uint32 color);
 	void copyScaled(const Graphics::Surface &surface, int x, int y, const byte *palette = nullptr);
+
+	/** Draw a frame (in the screen format) stretched over a 640x480-space rectangle. */
+	void copyFitted(const Graphics::Surface &frame, const Common::Rect &rect);
+
+	/** Open the HD replacement of a movie (<dir>/Vids/<name>, any case), or nullptr. */
+	Common::SeekableReadStream *openVideo(const Common::String &name);
 	void setCursor(ResourceId id, uint32 frameIndex, const GraphicFrame *frame, const Common::Point &hotspot, const byte *palette);
 
 	/** Testing aid: scene to start in (ASYLUM_HD_SCENE), or -1. */
@@ -143,6 +150,7 @@ private:
 	// Testing aid: ASYLUM_HD_DUMP=<dir> saves every ASYLUM_HD_DUMP_EVERY-th frame
 	// (HD and original) and quits after ASYLUM_HD_DUMP_MAX of them
 	void dump(const byte *buffer, const byte *palette);
+	void dumpVideo(const Graphics::Surface &frame);
 	uint32 _presentCount;
 	uint32 _dumpCount;
 };

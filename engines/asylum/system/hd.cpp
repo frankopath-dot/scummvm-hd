@@ -616,19 +616,80 @@ void HdRenderer::copyScaled(const Graphics::Surface &surface, int x, int y, cons
 		_system->copyRectToScreen(scaled.getBasePtr(clipped.left - r.left, clipped.top - r.top), scaled.pitch,
 		                          clipped.left, clipped.top, clipped.width(), clipped.height());
 
-	// Testing aid: also save some of the enlarged video frames
-	static uint32 videoFrames = 0;
-	if (getenv("ASYLUM_HD_DUMP") && surface.w >= 320 && videoFrames++ % 30 == 0) {
-		Common::DumpFile f;
-		if (f.open(Common::Path(Common::String::format("%s/vid_%03d.png", getenv("ASYLUM_HD_DUMP"), videoFrames / 30), '/')))
-			Image::writePNG(f, scaled);
-	}
+	if (surface.h >= 160)
+		dumpVideo(scaled);
 
 	scaled.free();
 	if (conv) {
 		conv->free();
 		delete conv;
 	}
+}
+
+void HdRenderer::copyFitted(const Graphics::Surface &frame, const Common::Rect &rect) {
+	const int s = _scale;
+	Common::Rect target(rect.left * s, rect.top * s, rect.right * s, rect.bottom * s);
+	target.clip(Common::Rect(_out.w, _out.h));
+	if (target.isEmpty() || frame.format.bytesPerPixel != 4)
+		return;
+
+	const Graphics::Surface *src = &frame;
+	Graphics::Surface resized;
+	if (frame.w != rect.width() * s || frame.h != rect.height() * s) {
+		// Bilinear resample to our scale (HD movies are made for one scale)
+		const int tw = rect.width() * s, th = rect.height() * s;
+		resized.create(tw, th, _format);
+		for (int y = 0; y < th; y++) {
+			int fy = MAX(0, ((2 * y + 1) * frame.h * 128) / th - 128);
+			int y0 = MIN(fy >> 8, frame.h - 1), y1 = MIN(y0 + 1, frame.h - 1), wy = fy & 0xFF;
+			const uint32 *r0 = (const uint32 *)frame.getBasePtr(0, y0), *r1 = (const uint32 *)frame.getBasePtr(0, y1);
+			uint32 *o = (uint32 *)resized.getBasePtr(0, y);
+			for (int x = 0; x < tw; x++) {
+				int fx = MAX(0, ((2 * x + 1) * frame.w * 128) / tw - 128);
+				int x0 = MIN(fx >> 8, frame.w - 1), x1 = MIN(x0 + 1, frame.w - 1), wx = fx & 0xFF;
+				uint32 out = 0;
+				for (int sh = 0; sh < 32; sh += 8) {
+					int a = (r0[x0] >> sh) & 0xFF, b = (r0[x1] >> sh) & 0xFF, c = (r1[x0] >> sh) & 0xFF, d = (r1[x1] >> sh) & 0xFF;
+					int top = a * (256 - wx) + b * wx, bottom = c * (256 - wx) + d * wx;
+					out |= (uint32)(((top * (256 - wy) + bottom * wy) >> 16) & 0xFF) << sh;
+				}
+				o[x] = out;
+			}
+		}
+		src = &resized;
+	}
+
+	int ox = target.left - rect.left * s, oy = target.top - rect.top * s;
+	_system->copyRectToScreen(src->getBasePtr(ox, oy), src->pitch, target.left, target.top, target.width(), target.height());
+	dumpVideo(*src);
+	resized.free();
+}
+
+void HdRenderer::dumpVideo(const Graphics::Surface &frame) {
+	// Testing aid: save every 30th movie frame as shown
+	static uint32 videoFrames = 0;
+	if (!getenv("ASYLUM_HD_DUMP") || videoFrames++ % 30)
+		return;
+
+	Common::DumpFile f;
+	if (f.open(Common::Path(Common::String::format("%s/vid_%03d.png", getenv("ASYLUM_HD_DUMP"), videoFrames / 30), '/')))
+		Image::writePNG(f, frame);
+}
+
+Common::SeekableReadStream *HdRenderer::openVideo(const Common::String &name) {
+	Common::FSNode vids = _dir.getChild("Vids");
+	Common::FSList files;
+	if (!vids.isDirectory() || !vids.getChildren(files, Common::FSNode::kListFilesOnly))
+		return nullptr;
+
+	for (Common::FSList::const_iterator f = files.begin(); f != files.end(); ++f) {
+		if (f->getName().equalsIgnoreCase(name)) {
+			debug(1, "HD: playing %s", f->getPath().toString().c_str());
+			return f->createReadStream();
+		}
+	}
+
+	return nullptr;
 }
 
 void HdRenderer::setCursor(ResourceId id, uint32 frameIndex, const GraphicFrame *frame, const Common::Point &hotspot, const byte *palette) {
