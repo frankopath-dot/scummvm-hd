@@ -41,6 +41,7 @@
 #include "asylum/puzzles/puzzles.h"
 
 #include "asylum/system/cursor.h"
+#include "asylum/system/hd.h"
 #include "asylum/system/savegame.h"
 #include "asylum/system/screen.h"
 #include "asylum/system/speech.h"
@@ -128,6 +129,7 @@ Common::Error AsylumEngine::run() {
 	_puzzles   = new Puzzles(this);
 	_savegame  = new Savegame(this);
 	_screen    = new Screen(this);
+	_screen->initHd();
 	_script    = new ScriptManager(this);
 	_sound     = new Sound(this, _mixer);
 	_special   = new Special(this);
@@ -172,6 +174,17 @@ Common::Error AsylumEngine::run() {
 	AsylumEvent initEvt(EVENT_ASYLUM_INIT);
 	if (_handler)
 		_handler->handleEvent(initEvt);
+
+	// Testing aids for the HD renderer: play a movie, start straight in a scene
+	if (_screen->hd() && HdRenderer::testVideo() >= 0)
+		_video->play((uint32)HdRenderer::testVideo(), _menu);
+
+	if (_screen->hd() && HdRenderer::testScene() > 0) {
+		_delayedSceneIndex = (ResourcePackId)HdRenderer::testScene();
+		_puzzles->reset();
+		_menu->setGameStarted();
+		_savegame->resetVersion();
+	}
 
 	// Start running event loop
 	while (!shouldQuit()) {
@@ -420,6 +433,12 @@ void AsylumEngine::handleEvents() {
 		case Common::EVENT_LBUTTONUP:
 		case Common::EVENT_RBUTTONDOWN:
 		case Common::EVENT_RBUTTONUP:
+			// The HD screen is larger than the game's 640x480
+			if (_screen->isHd()) {
+				ev.mouse.x /= (int16)_screen->hd()->scale();
+				ev.mouse.y /= (int16)_screen->hd()->scale();
+			}
+
 			// Handle events
 			if (_handler)
 				_handler->handleEvent(ev);
