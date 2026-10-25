@@ -32,6 +32,12 @@ To use the HD images with this build, add `hd_backgrounds=<folder>` (The Dig) or
 `hd_dir=<folder>` (Sanitarium) to the game's entry in `scummvm.ini`; the setup
 programs do this for you.
 
+## Support
+
+The HD patches are free. If you enjoy them, you can buy me a coffee on
+[Ko-fi](https://ko-fi.com/frankopath). Please also consider
+[supporting ScummVM](https://www.scummvm.org/donate/), which makes all of this possible.
+
 ## Credits and licenses
 
 - ScummVM is GPL-3.0-or-later; this fork is too. All changes are in the commits on top of
