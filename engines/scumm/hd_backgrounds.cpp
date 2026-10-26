@@ -612,6 +612,32 @@ bool HdBackgrounds::celBlock(const Owner &o, int oi, int oj, int sx, int sy, byt
 	const byte *cur = _palette + idx * 3;
 	const bool mirror = o.rec & 0x80000000;
 
+	// A scaled actor (the tram arriving and leaving): a screen pixel stands for a run of cel pixels, from the one
+	// after the previous screen pixel's up to its own (the scaling skips the others), told by the neighbors'
+	// owners. The HD block averages that part of the HD cel instead of showing one cel pixel's block.
+	auto sameCel = [&](int qi, int qj) -> const Owner * {
+		if (qi < 0 || qj < 0 || qi >= _w || qj >= _h)
+			return nullptr;
+		const Owner *q = &_screenOwners[qj * _w + qi];
+		return !q->shade && q->rec == o.rec && q->color == _screen[qj * _w + qi] ? q : nullptr;
+	};
+	const int back = mirror ? 1 : -1;   // screen direction of the previous cel column
+	int spanX = 1, spanY = 1;
+	const Owner *q;
+	if ((q = sameCel(oi + back, oj)) && q->sy == o.sy && q->sx < o.sx)
+		spanX = o.sx - q->sx;
+	else if ((q = sameCel(oi - back, oj)) && q->sy == o.sy && q->sx > o.sx)
+		spanX = q->sx - o.sx;
+	if ((q = sameCel(oi, oj - 1)) && q->sx == o.sx && q->sy < o.sy)
+		spanY = o.sy - q->sy;
+	else if ((q = sameCel(oi, oj + 1)) && q->sx == o.sx && q->sy > o.sy)
+		spanY = q->sy - o.sy;
+	spanX = MIN(spanX, 64);
+	spanY = MIN(spanY, 64);
+	const bool scaled = spanX > 1 || spanY > 1;
+	if (scaled && edge)   // the soft edge spill assumes neighboring cel pixels
+		return false;
+
 	// Scale4x cels hold exact copies of the cel's colors: their own pixel's and, in the corners, nearby cel
 	// pixels' (up to two pixels away, Scale2x twice). Such a color is replaced by the color that cel pixel has
 	// on screen now, which follows palette changes and actor palettes that map the costume to other colors.
@@ -666,9 +692,35 @@ bool HdBackgrounds::celBlock(const Owner &o, int oi, int oj, int sx, int sy, byt
 	const int n2 = 2 * kScale;
 	for (int dy = 0; dy < kScale; ++dy) {
 		for (int dx = 0; dx < kScale; ++dx) {
-			const int hx = sx * kScale + (mirror ? kScale - 1 - dx : dx), hy = sy * kScale + dy;
 			byte a, r, g, b, br, bg, bb;
-			c.hd->format.colorToARGB(*(const uint32 *)c.hd->getBasePtr(hx, hy), a, r, g, b);
+			if (!scaled) {
+				const int hx = sx * kScale + (mirror ? kScale - 1 - dx : dx), hy = sy * kScale + dy;
+				c.hd->format.colorToARGB(*(const uint32 *)c.hd->getBasePtr(hx, hy), a, r, g, b);
+			} else {
+				const int x0 = mirror ? (sx + 1) * kScale - (dx + 1) * spanX : (sx + 1 - spanX) * kScale + dx * spanX;
+				const int y0 = (sy + 1 - spanY) * kScale + dy * spanY;
+				const int stepX = (spanX + 3) / 4, stepY = (spanY + 3) / 4;   // at most 4x4 samples
+				uint sa = 0, sr = 0, sg = 0, sb = 0, n = 0;
+				for (int y = y0; y < y0 + spanY; y += stepY) {
+					for (int x = x0; x < x0 + spanX; x += stepX) {
+						++n;
+						if (x < 0 || y < 0 || x >= c.hd->w || y >= c.hd->h)
+							continue;
+						byte pa, pr, pg, pb;
+						c.hd->format.colorToARGB(*(const uint32 *)c.hd->getBasePtr(x, y), pa, pr, pg, pb);
+						sa += pa;
+						sr += pr * pa;
+						sg += pg * pa;
+						sb += pb * pa;
+					}
+				}
+				a = sa / n;
+				if (sa) {
+					r = sr / sa;
+					g = sg / sa;
+					b = sb / sa;
+				}
+			}
 			if (!a)
 				continue;
 			uint32 &d = dst[dy * dstPitch + dx];
