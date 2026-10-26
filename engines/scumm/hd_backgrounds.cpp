@@ -230,26 +230,24 @@ void HdBackgrounds::setCycledColors(const byte *used) {
 }
 
 // Per palette index, find the per-channel factor that turns the room's
-// original color into the current one, so fades and lighting changes carry
-// over to the HD image. Color-cycled indices are recolored the same way, which
-// animates them in HD. Other indices whose color changed in a way that is not
-// a plain brightening/darkening are left to the original pixels, as is the
-// (171, 0, 171) placeholder color The Dig uses for areas filled at runtime.
+// original color into the current one, so fades, lighting changes and flashes
+// (the power room's lightning turns whole blue ramps into one light blue)
+// carry over to the HD image. Color-cycled indices are recolored the same way,
+// which animates them in HD. Indices the factor can't reach (a channel more
+// than 4x brighter) are left to the original pixels, as is the (171, 0, 171)
+// placeholder color The Dig uses for areas filled at runtime.
 void HdBackgrounds::updateTints() {
 	for (int i = 0; i < 256; ++i) {
 		const byte *o = _origPalette + i * 3;
 		const byte *c = _palette + i * 3;
-		uint k[3];
-		uint kMin = 0xFFFF, kMax = 0;
+		bool reachable = true;
 		for (int ch = 0; ch < 3; ++ch) {
-			k[ch] = MIN<uint>((c[ch] + 4) * 256 / (o[ch] + 4), 1024);
-			kMin = MIN(kMin, k[ch]);
-			kMax = MAX(kMax, k[ch]);
+			const uint k = (c[ch] + 4) * 256 / (o[ch] + 4);
+			reachable &= k <= 1024;
+			_tint[i][ch] = MIN<uint>(k, 1024);
 		}
 		const bool placeholder = o[0] == 171 && o[1] == 0 && o[2] == 171;
-		_tintOk[i] = !placeholder && (_cycled[i] || kMax * 5 <= kMin * 8);   // channels within a factor of 1.6
-		for (int ch = 0; ch < 3; ++ch)
-			_tint[i][ch] = k[ch];
+		_tintOk[i] = !placeholder && (_cycled[i] || reachable);
 	}
 }
 
