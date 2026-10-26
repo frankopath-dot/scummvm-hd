@@ -617,6 +617,7 @@ byte AkosRenderer::paintCelByleRLE(int xMoveCur, int yMoveCur) {
 	compData.scaleIndexMask = (_vm->_game.heversion >= 61) ? 0xff : -1;
 
 	bool decode = true;
+	const byte *celStart = _srcPtr;   // HD costumes: clipping skips into the cel data below
 
 	byte drawFlag = paintCelByleRLECommon(
 		xMoveCur,
@@ -643,7 +644,7 @@ byte AkosRenderer::paintCelByleRLE(int xMoveCur, int yMoveCur) {
 		_vm->_hd->setVirtScreen((const byte *)static_cast<const Graphics::Surface &>(vs).getPixels(), vs.pitch, vs.h);
 		const Actor *a = _vm->derefActor(_actorID, "paintCelByleRLE");
 		// An actor palette that recolors the costume: the HD cel's colors would be wrong
-		_hdRec = _hdRecolored ? 0 : _vm->_hd->celBegin(a->_costume, (uint32)(_srcPtr - _akcd), !_drawActorToRight);
+		_hdRec = _hdRecolored ? 0 : _vm->_hd->celBegin(a->_costume, (uint32)(celStart - _akcd), !_drawActorToRight);
 	}
 
 	byleRLEDecode(compData, _actorHitX, _actorHitY, _actorHitMode ? &_actorHitResult : nullptr, _xmap);
