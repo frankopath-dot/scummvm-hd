@@ -258,10 +258,8 @@ void AkosRenderer::setPalette(uint16 *new_palette) {
 		for (i = 0; i < size; i++)
 			_palette[i] = (byte)_vm->_hePalettes[_paletteNum * _vm->_hePaletteSlot + 768 + _akpl[i]];
 	} else {
-		_hdRecolored = false;
 		for (i = 0; i < size; i++) {
 			_palette[i] = new_palette[i] != 0xFF ? new_palette[i] : _akpl[i];
-			_hdRecolored |= _palette[i] != _akpl[i];
 		}
 	}
 
@@ -643,8 +641,8 @@ byte AkosRenderer::paintCelByleRLE(int xMoveCur, int yMoveCur) {
 		const VirtScreen &vs = _vm->_virtscr[kMainVirtScreen];
 		_vm->_hd->setVirtScreen((const byte *)static_cast<const Graphics::Surface &>(vs).getPixels(), vs.pitch, vs.h);
 		const Actor *a = _vm->derefActor(_actorID, "paintCelByleRLE");
-		// An actor palette that recolors the costume: the HD cel's colors would be wrong
-		_hdRec = _hdRecolored ? 0 : _vm->_hd->celBegin(a->_costume, (uint32)(celStart - _akcd), !_drawActorToRight);
+		// an actor palette that recolors the costume is followed by HdBackgrounds::celBlock()
+		_hdRec = _vm->_hd->celBegin(a->_costume, (uint32)(celStart - _akcd), !_drawActorToRight);
 	}
 
 	byleRLEDecode(compData, _actorHitX, _actorHitY, _actorHitMode ? &_actorHitResult : nullptr, _xmap);
@@ -754,7 +752,7 @@ byte AkosRenderer::paintCelCDATRLE(int xmoveCur, int ymoveCur) {
 		const VirtScreen &vs = _vm->_virtscr[kMainVirtScreen];
 		_vm->_hd->setVirtScreen((const byte *)static_cast<const Graphics::Surface &>(vs).getPixels(), vs.pitch, vs.h);
 		const Actor *a = _vm->derefActor(_actorID, "paintCelCDATRLE");
-		_hdRec = _hdRecolored ? 0 : _vm->_hd->celBegin(a->_costume, (uint32)(_srcPtr - _akcd), !_drawActorToRight);
+		_hdRec = _vm->_hd->celBegin(a->_costume, (uint32)(_srcPtr - _akcd), !_drawActorToRight);
 		bdd.hdPixel = hdBompPixel;
 		bdd.hdCtx = this;
 	}
