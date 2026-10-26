@@ -965,11 +965,11 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 				if (!o || !o->shade || !o->shadeRec)
 					continue;
 				const int ddx = -nb4[n][0] * ((o->shadeRec & 0x80000000) ? -1 : 1), ddy = -nb4[n][1];
-				const HdCel &c = _cels[(o->shadeRec & 0xFFFFF) - 1];
 				const int cx = o->ssx + ddx, cy = o->ssy + ddy;
 				byte alpha[kScale * kScale], ca, cr, cg, cb;
-				if (!shadeAlpha(*o, cx, cy, alpha))
+				if (!shadeAlpha(*o, cx, cy, alpha))   // also checks that the cel is still in the cache
 					continue;
+				const HdCel &c = _cels[(o->shadeRec & 0xFFFFF) - 1];
 				// inside the original shape: drawn by that cel itself, or that cel pixel isn't a shading one
 				c.orig->format.colorToARGB(*(const uint32 *)c.orig->getBasePtr(cx, cy), ca, cr, cg, cb);
 				if (ca)
