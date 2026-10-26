@@ -619,6 +619,15 @@ bool HdBackgrounds::celBlock(const Owner &o, int oi, int oj, int sx, int sy, byt
 	int nn = 0;
 	exact[nn].rgb = orr << 16 | og << 8 | ob;
 	exact[nn++].cur = cur;
+	// The 3x3 cel pixels around the owner's, in screen orientation: original and current color (for the
+	// Real-ESRGAN cels below); neighbors that aren't on screen take the owner pixel's.
+	int nbOrig[3][3][3], nbCur[3][3][3];
+	for (int y3 = 0; y3 < 3; ++y3)
+		for (int x3 = 0; x3 < 3; ++x3)
+			for (int ch = 0; ch < 3; ++ch) {
+				nbOrig[y3][x3][ch] = ch == 0 ? orr : ch == 1 ? og : ob;
+				nbCur[y3][x3][ch] = cur[ch];
+			}
 	static const int nb12[12][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 }, { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 },
 	                                 { -2, 0 }, { 2, 0 }, { 0, -2 }, { 0, 2 } };
 	for (int n = 0; n < 12; ++n) {
@@ -636,6 +645,12 @@ bool HdBackgrounds::celBlock(const Owner &o, int oi, int oj, int sx, int sy, byt
 			continue;
 		exact[nn].rgb = qr << 16 | qg << 8 | qb;
 		exact[nn++].cur = _palette + _screen[qj * _w + qi] * 3;
+		if (n < 8 && !edge) {
+			int *no = nbOrig[nb12[n][1] + 1][qi - oi + 1], *nc = nbCur[nb12[n][1] + 1][qi - oi + 1];
+			no[0] = qr; no[1] = qg; no[2] = qb;
+			for (int ch = 0; ch < 3; ++ch)
+				nc[ch] = exact[nn - 1].cur[ch];
+		}
 	}
 	auto findExact = [&](uint32 rgb) -> const byte * {
 		for (int n = 0; n < nn; ++n)
@@ -644,27 +659,11 @@ bool HdBackgrounds::celBlock(const Owner &o, int oi, int oj, int sx, int sy, byt
 		return nullptr;
 	};
 
-	// Other HD colors (Real-ESRGAN cels) are tinted per channel by how the pixel's color changed. That only
-	// works if the screen color is the cel's color made uniformly brighter or darker (a fade, lighting);
-	// otherwise (an actor palette, a palette entry the scripts recolored) the HD cel doesn't show this pixel.
-	const uint kAvg = (cur[0] + cur[1] + cur[2] + 12) * 256 / (orr + og + ob + 12);
-	const bool uniform = ABS((int)MIN<uint>(255, orr * kAvg >> 8) - cur[0]) <= 24 &&
-	                     ABS((int)MIN<uint>(255, og * kAvg >> 8) - cur[1]) <= 24 &&
-	                     ABS((int)MIN<uint>(255, ob * kAvg >> 8) - cur[2]) <= 24;
-	if (!uniform) {
-		for (int dy = 0; dy < kScale; ++dy) {
-			for (int dx = 0; dx < kScale; ++dx) {
-				byte a, r, g, b;
-				c.hd->format.colorToARGB(*(const uint32 *)c.hd->getBasePtr(sx * kScale + dx, sy * kScale + dy), a, r, g, b);
-				if (a && !findExact(r << 16 | g << 8 | b))
-					return false;
-			}
-		}
-	}
-	const uint k[3] = { MIN<uint>((cur[0] + 4) * 256 / (orr + 4), 1024),
-	                    MIN<uint>((cur[1] + 4) * 256 / (og + 4), 1024),
-	                    MIN<uint>((cur[2] + 4) * 256 / (ob + 4), 1024) };
-
+	// Other HD colors (Real-ESRGAN cels): the HD pixel's detail (its difference from the cel's original color)
+	// on top of the color the cel has on screen now, both interpolated across the block from the neighboring
+	// cel pixels. That follows fades, flashes (the power room's lightning) and recolored palette entries, which
+	// a per-channel factor can't (a channel that was near 0), and the detail is scaled with the brightness.
+	const int n2 = 2 * kScale;
 	for (int dy = 0; dy < kScale; ++dy) {
 		for (int dx = 0; dx < kScale; ++dx) {
 			const int hx = sx * kScale + (mirror ? kScale - 1 - dx : dx), hy = sy * kScale + dy;
@@ -677,7 +676,20 @@ bool HdBackgrounds::celBlock(const Owner &o, int oi, int oj, int sx, int sy, byt
 			if (const byte *e = findExact(r << 16 | g << 8 | b)) {
 				r = e[0]; g = e[1]; b = e[2];
 			} else {
-				r = MIN<uint>(255, r * k[0] >> 8); g = MIN<uint>(255, g * k[1] >> 8); b = MIN<uint>(255, b * k[2] >> 8);
+				const int ox = 2 * dx + 1 - kScale, wx = ABS(ox), qx = ox < 0 ? 0 : 2;
+				const int oy = 2 * dy + 1 - kScale, wy = ABS(oy), qy = oy < 0 ? 0 : 2;
+				const int w00 = (n2 - wx) * (n2 - wy), w01 = wx * (n2 - wy), w10 = (n2 - wx) * wy, w11 = wx * wy;
+				int O[3], C[3];
+				for (int ch = 0; ch < 3; ++ch) {
+					O[ch] = (w00 * nbOrig[1][1][ch] + w01 * nbOrig[1][qx][ch] + w10 * nbOrig[qy][1][ch] + w11 * nbOrig[qy][qx][ch]) / (n2 * n2);
+					C[ch] = (w00 * nbCur[1][1][ch] + w01 * nbCur[1][qx][ch] + w10 * nbCur[qy][1][ch] + w11 * nbCur[qy][qx][ch]) / (n2 * n2);
+				}
+				const int lumO = O[0] * 3 + O[1] * 6 + O[2], lumC = C[0] * 3 + C[1] * 6 + C[2];
+				const int sc = CLIP((lumC + 160) * 256 / (lumO + 160), 64, 512);   // detail scale, 1/256
+				const byte h[3] = { r, g, b };
+				r = CLIP(C[0] + (h[0] - O[0]) * sc / 256, 0, 255);
+				g = CLIP(C[1] + (h[1] - O[1]) * sc / 256, 0, 255);
+				b = CLIP(C[2] + (h[2] - O[2]) * sc / 256, 0, 255);
 			}
 			d = _format.RGBToColor((r * a + br * (255 - a)) / 255, (g * a + bg * (255 - a)) / 255, (b * a + bb * (255 - a)) / 255);
 		}
