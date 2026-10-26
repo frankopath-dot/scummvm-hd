@@ -335,6 +335,9 @@ void drawBomp(const BompDrawData &bd) {
 
 			// Finally, draw the decoded, scaled, masked and recolored line onto
 			// the target surface, using the specified shadow mode
+			byte under[1024];
+			if (hd)
+				memcpy(under, dst, width);
 			bompApplyShadow(bd.shadowMode, bd.shadowPalette, line_ptr, dst, width, 255);
 
 			if (hd) {
@@ -342,7 +345,9 @@ void drawBomp(const BompDrawData &bd) {
 					if (line_ptr[i] == 255)
 						continue;
 					const int k = clip.left + i;
-					bd.hdPixel(bd.hdCtx, dst + i, bd.mirror ? bd.srcwidth - 1 - k : k, srcRow, dst[i]);
+					// pixels that went through the shadow palette (shadow, tinted glass, glow) keep what was under them
+					const bool shade = (bd.shadowMode == 3 && line_ptr[i] < 8) || (bd.shadowMode == 1 && line_ptr[i] == 13);
+					bd.hdPixel(bd.hdCtx, dst + i, bd.mirror ? bd.srcwidth - 1 - k : k, srcRow, dst[i], shade, under[i]);
 				}
 			}
 		}

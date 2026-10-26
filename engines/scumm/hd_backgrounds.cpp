@@ -485,16 +485,116 @@ const HdBackgrounds::Owner *HdBackgrounds::validOwner(int i, int j) const {
 		return nullptr;
 	const Owner &o = _screenOwners[j * _w + i];
 	const byte idx = _screen[j * _w + i];
-	if (!o.rec || o.color != idx || _back[j * _w + i] == idx)
+	if ((!o.rec && !o.shade) || o.color != idx || _back[j * _w + i] == idx)
 		return nullptr;
 	return &o;
 }
 
+// For shaded screen pixel i, j: the palette colors under it (c[0..2]) and the shadow palette's result (c[3..5]),
+// averaged over the shaded pixels around it. The shadow palette picks the nearest of 256 colors for every
+// pixel, so neighbors that should get the same shading come out a little different, which a 4x scale shows.
+bool HdBackgrounds::shadeColors(int i, int j, uint *c) const {
+	const Owner *own = validOwner(i, j);
+	if (!own || !own->shade)
+		return false;
+	uint n = 0;
+	for (int k = 0; k < 6; ++k)
+		c[k] = 0;
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			const Owner *o = validOwner(i + dx, j + dy);
+			if (!o || !o->shade)
+				continue;
+			const byte *u = _palette + o->under * 3, *r = _palette + _screen[(j + dy) * _w + i + dx] * 3;
+			for (int ch = 0; ch < 3; ++ch) {
+				c[ch] += u[ch];
+				c[3 + ch] += r[ch];
+			}
+			++n;
+		}
+	}
+	for (int k = 0; k < 6; ++k)
+		c[k] = c[k] * 16 / n;   // 1/16 steps
+	return true;
+}
+
+// The HD alpha of the shading cel of o (the glass, the beam, the shadow) at its cel pixel sx, sy, which can be
+// just outside the original shape where the HD cel's smooth edge spills. False without an HD cel there.
+bool HdBackgrounds::shadeAlpha(const Owner &o, int sx, int sy, byte *alpha) const {
+	const uint32 slot = (o.shadeRec & 0xFFFFF) - 1;
+	if (!o.shadeRec || slot >= _cels.size() || _cels[slot].gen != ((o.shadeRec >> 20) & 0x7FF) || !_cels[slot].hd)
+		return false;
+	const HdCel &c = _cels[slot];
+	if (sx < 0 || sy < 0 || sx >= c.orig->w || sy >= c.orig->h)
+		return false;
+	const bool mirror = o.shadeRec & 0x80000000;
+	bool any = false;
+	for (int dy = 0; dy < kScale; ++dy) {
+		for (int dx = 0; dx < kScale; ++dx) {
+			byte a, r, g, b;
+			c.hd->format.colorToARGB(*(const uint32 *)c.hd->getBasePtr(sx * kScale + (mirror ? kScale - 1 - dx : dx), sy * kScale + dy), a, r, g, b);
+			alpha[dy * kScale + dx] = a;
+			any |= a != 0;
+		}
+	}
+	return any;
+}
+
+// dst = base + (dst - base) * alpha, for a kScale x kScale block
+void HdBackgrounds::blendBlock(const uint32 *base, const byte *alpha, uint32 *dst, int dstPitch) const {
+	for (int dy = 0; dy < kScale; ++dy) {
+		for (int dx = 0; dx < kScale; ++dx) {
+			const uint a = alpha[dy * kScale + dx];
+			uint32 &d = dst[dy * dstPitch + dx];
+			byte r, g, b, br, bg, bb;
+			_format.colorToRGB(d, r, g, b);
+			_format.colorToRGB(base[dy * kScale + dx], br, bg, bb);
+			d = _format.RGBToColor((r * a + br * (255 - a)) / 255, (g * a + bg * (255 - a)) / 255, (b * a + bb * (255 - a)) / 255);
+		}
+	}
+}
+
+// Recolor the HD block of shaded pixel i, j the way the shadow palette turned the color under it into the
+// one on screen: darker channels are multiplied, brighter ones screened, so the block's texture stays and its
+// flat color lands on the new one. Unless flat is set, the colors are interpolated towards the neighbors'
+// across the block.
+void HdBackgrounds::shadeBlock(int i, int j, bool flat, uint32 *dst, int dstPitch) const {
+	uint nb[3][3][6];
+	if (!shadeColors(i, j, nb[1][1]))
+		return;
+	for (int dy = -1; dy <= 1; ++dy)
+		for (int dx = -1; dx <= 1; ++dx)
+			if ((dx || dy) && (flat || !shadeColors(i + dx, j + dy, nb[dy + 1][dx + 1])))
+				memcpy(nb[dy + 1][dx + 1], nb[1][1], sizeof(nb[1][1]));
+	const int n = 2 * kScale;
+	for (int dy = 0; dy < kScale; ++dy) {
+		const int oy = 2 * dy + 1 - kScale, wy = ABS(oy), sy = oy < 0 ? 0 : 2;
+		for (int dx = 0; dx < kScale; ++dx) {
+			const int ox = 2 * dx + 1 - kScale, wx = ABS(ox), sx = ox < 0 ? 0 : 2;
+			uint32 &d = dst[dy * dstPitch + dx];
+			byte c[3];
+			_format.colorToRGB(d, c[0], c[1], c[2]);
+			for (int ch = 0; ch < 3; ++ch) {
+				uint v[2];
+				for (int k = 0; k < 2; ++k)
+					v[k] = ((n - wx) * (n - wy) * nb[1][1][3 * k + ch] + wx * (n - wy) * nb[1][sx][3 * k + ch] +
+					        (n - wx) * wy * nb[sy][1][3 * k + ch] + wx * wy * nb[sy][sx][3 * k + ch]) / (n * n);
+				const uint u = v[0], r = v[1];   // 1/16 steps
+				if (r <= u)
+					c[ch] = c[ch] * (r + 16) / (u + 16);
+				else
+					c[ch] = 255 - (255 - c[ch]) * (4096 - r) / (4096 - u);
+			}
+			d = _format.RGBToColor(c[0], c[1], c[2]);
+		}
+	}
+}
+
 // Draw the HD block for cel pixel sx, sy over what dst holds (the scenery under it), tinted per channel by
-// the current palette color idx against the cel's original color at the owner's pixel. With edge set, sx, sy
-// is just outside the original cel's shape (a neighbor of a costume pixel): only the HD cel's soft edge
-// spilling there is drawn, so the silhouette isn't cut along the original pixels.
-bool HdBackgrounds::celBlock(const Owner &o, int sx, int sy, byte idx, bool edge, uint32 *dst, int dstPitch) const {
+// the current palette color idx against the cel's original color at the owner's pixel (o, on screen at oi, oj).
+// With edge set, sx, sy is just outside the original cel's shape (a neighbor of a costume pixel): only the HD
+// cel's soft edge spilling there is drawn, so the silhouette isn't cut along the original pixels.
+bool HdBackgrounds::celBlock(const Owner &o, int oi, int oj, int sx, int sy, byte idx, bool edge, uint32 *dst, int dstPitch) const {
 	const uint32 slot = (o.rec & 0xFFFFF) - 1;
 	if (slot >= _cels.size() || _cels[slot].gen != ((o.rec >> 20) & 0x7FF) || !_cels[slot].hd)
 		return false;
@@ -512,10 +612,61 @@ bool HdBackgrounds::celBlock(const Owner &o, int sx, int sy, byte idx, bool edge
 			return false;
 	}
 	const byte *cur = _palette + idx * 3;
+	const bool mirror = o.rec & 0x80000000;
+
+	// Scale4x cels hold exact copies of the cel's colors: their own pixel's and, in the corners, nearby cel
+	// pixels' (up to two pixels away, Scale2x twice). Such a color is replaced by the color that cel pixel has
+	// on screen now, which follows palette changes and actor palettes that map the costume to other colors.
+	struct { uint32 rgb; const byte *cur; } exact[13];
+	int nn = 0;
+	exact[nn].rgb = orr << 16 | og << 8 | ob;
+	exact[nn++].cur = cur;
+	static const int nb12[12][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 }, { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 },
+	                                 { -2, 0 }, { 2, 0 }, { 0, -2 }, { 0, 2 } };
+	for (int n = 0; n < 12; ++n) {
+		const int qx = o.sx + nb12[n][0], qy = o.sy + nb12[n][1];
+		const int qi = oi + (mirror ? -nb12[n][0] : nb12[n][0]), qj = oj + nb12[n][1];
+		if (qi < 0 || qj < 0 || qi >= _w || qj >= _h || qx < 0 || qy < 0 || qx >= c.orig->w || qy >= c.orig->h)
+			continue;
+		// not validOwner(): a costume pixel that has the scenery's color still has its own color
+		const Owner *q = &_screenOwners[qj * _w + qi];
+		if (q->shade || q->rec != o.rec || q->sx != qx || q->sy != qy || q->color != _screen[qj * _w + qi])
+			continue;
+		byte qa, qr, qg, qb;
+		c.orig->format.colorToARGB(*(const uint32 *)c.orig->getBasePtr(qx, qy), qa, qr, qg, qb);
+		if (!qa)
+			continue;
+		exact[nn].rgb = qr << 16 | qg << 8 | qb;
+		exact[nn++].cur = _palette + _screen[qj * _w + qi] * 3;
+	}
+	auto findExact = [&](uint32 rgb) -> const byte * {
+		for (int n = 0; n < nn; ++n)
+			if (exact[n].rgb == rgb)
+				return exact[n].cur;
+		return nullptr;
+	};
+
+	// Other HD colors (Real-ESRGAN cels) are tinted per channel by how the pixel's color changed. That only
+	// works if the screen color is the cel's color made uniformly brighter or darker (a fade, lighting);
+	// otherwise (an actor palette, a palette entry the scripts recolored) the HD cel doesn't show this pixel.
+	const uint kAvg = (cur[0] + cur[1] + cur[2] + 12) * 256 / (orr + og + ob + 12);
+	const bool uniform = ABS((int)MIN<uint>(255, orr * kAvg >> 8) - cur[0]) <= 24 &&
+	                     ABS((int)MIN<uint>(255, og * kAvg >> 8) - cur[1]) <= 24 &&
+	                     ABS((int)MIN<uint>(255, ob * kAvg >> 8) - cur[2]) <= 24;
+	if (!uniform) {
+		for (int dy = 0; dy < kScale; ++dy) {
+			for (int dx = 0; dx < kScale; ++dx) {
+				byte a, r, g, b;
+				c.hd->format.colorToARGB(*(const uint32 *)c.hd->getBasePtr(sx * kScale + dx, sy * kScale + dy), a, r, g, b);
+				if (a && !findExact(r << 16 | g << 8 | b))
+					return false;
+			}
+		}
+	}
 	const uint k[3] = { MIN<uint>((cur[0] + 4) * 256 / (orr + 4), 1024),
 	                    MIN<uint>((cur[1] + 4) * 256 / (og + 4), 1024),
 	                    MIN<uint>((cur[2] + 4) * 256 / (ob + 4), 1024) };
-	const bool mirror = o.rec & 0x80000000;
+
 	for (int dy = 0; dy < kScale; ++dy) {
 		for (int dx = 0; dx < kScale; ++dx) {
 			const int hx = sx * kScale + (mirror ? kScale - 1 - dx : dx), hy = sy * kScale + dy;
@@ -525,7 +676,11 @@ bool HdBackgrounds::celBlock(const Owner &o, int sx, int sy, byte idx, bool edge
 				continue;
 			uint32 &d = dst[dy * dstPitch + dx];
 			_format.colorToRGB(d, br, bg, bb);
-			r = MIN<uint>(255, r * k[0] >> 8); g = MIN<uint>(255, g * k[1] >> 8); b = MIN<uint>(255, b * k[2] >> 8);
+			if (const byte *e = findExact(r << 16 | g << 8 | b)) {
+				r = e[0]; g = e[1]; b = e[2];
+			} else {
+				r = MIN<uint>(255, r * k[0] >> 8); g = MIN<uint>(255, g * k[1] >> 8); b = MIN<uint>(255, b * k[2] >> 8);
+			}
 			d = _format.RGBToColor((r * a + br * (255 - a)) / 255, (g * a + bg * (255 - a)) / 255, (b * a + bb * (255 - a)) / 255);
 		}
 	}
@@ -653,27 +808,70 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 			const Owner *own = validOwner(i, j);
 			const byte sidx = own ? _back[j * _w + i] : idx;
 
-			bool done = false;
-			byte &why = _why[j * _w + i];
-			why = !haveHd ? 0 : (rx < 0 || ry < 0) ? 1 : !_tintOk[sidx] ? 2 : _back[j * _w + i] != sidx ? 3 : 4;
-			if (why == 4) {
+			// HD scenery for back buffer index sidx at this pixel; why: 5 room, 6 object
+			auto scenery = [&](byte sidx, byte &why) {
+				if (!haveHd || rx < 0 || ry < 0 || !_tintOk[sidx])
+					return false;
 				const uint16 *field = &_field[(j - y + 1) * fieldPitch + (i - x + 1) * 3];
 				// Objects first: where an object image covers the room, its pixels can share palette indices
 				// with the room image under it, and the HD room (which shows the room's original content
 				// there) would turn the object into a mosaic of both.
-				for (int o = _objects.size() - 1; !done && o >= 0; --o)
-					if ((done = hdPixel(_objects[o]->image, rx - _objects[o]->x, ry - _objects[o]->y, sidx, field, fieldPitch, dst, dstPitch)))
+				for (int o = _objects.size() - 1; o >= 0; --o) {
+					if (hdPixel(_objects[o]->image, rx - _objects[o]->x, ry - _objects[o]->y, sidx, field, fieldPitch, dst, dstPitch)) {
 						why = 6;
-				if (!done && (done = hdPixel(_bg, rx, ry, sidx, field, fieldPitch, dst, dstPitch)))
+						return true;
+					}
+				}
+				if (hdPixel(_bg, rx, ry, sidx, field, fieldPitch, dst, dstPitch)) {
 					why = 5;
+					return true;
+				}
+				return false;
+			};
+
+			bool done = false;
+			byte &why = _why[j * _w + i];
+			if (own && own->shade) {
+				// Shadow, tinted glass or glow: draw what is under it in HD (the scenery, or an HD costume pixel
+				// on top of it), then recolor that the way the shadow palette did
+				const byte back = _back[j * _w + i];
+				byte w;
+				done = (own->under == back || own->rec) && scenery(back, w);
+				why = 9;
+				if (own->under != back) {
+					if (!done)
+						for (int dy = 0; dy < kScale; ++dy)
+							for (int dx = 0; dx < kScale; ++dx)
+								dst[dy * dstPitch + dx] = _palette32[back];
+					done = own->rec && celBlock(*own, i, j, own->sx, own->sy, own->under, false, dst, dstPitch);
+					why = done ? 10 : own->rec ? 11 : 12;
+				}
+				if (!done)
+					for (int dy = 0; dy < kScale; ++dy)
+						for (int dx = 0; dx < kScale; ++dx)
+							dst[dy * dstPitch + dx] = _palette32[own->under];
+				// Shade in proportion to the shading cel's HD alpha, so its edges are as smooth as the HD cel's.
+				// Without HD alpha (the costume shadow color is left out of the HD cels) the whole block.
+				uint32 base[kScale * kScale];
+				for (int dy = 0; dy < kScale; ++dy)
+					memcpy(base + dy * kScale, dst + dy * dstPitch, kScale * 4);
+				shadeBlock(i, j, false, dst, dstPitch);
+				byte alpha[kScale * kScale];
+				if (shadeAlpha(*own, own->ssx, own->ssy, alpha))
+					blendBlock(base, alpha, dst, dstPitch);
+				continue;
 			}
+
+			why = !haveHd ? 0 : (rx < 0 || ry < 0) ? 1 : !_tintOk[sidx] ? 2 : _back[j * _w + i] != sidx ? 3 : 4;
+			if (why == 4)
+				done = scenery(sidx, why);
 			if (own) {
 				if (!done) {
 					for (int dy = 0; dy < kScale; ++dy)
 						for (int dx = 0; dx < kScale; ++dx)
 							dst[dy * dstPitch + dx] = _palette32[sidx];
 				}
-				if (celBlock(*own, own->sx, own->sy, idx, false, dst, dstPitch)) {
+				if (celBlock(*own, i, j, own->sx, own->sy, idx, false, dst, dstPitch)) {
 					why = 8;
 					continue;
 				}
@@ -690,13 +888,36 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 				static const int nb[4][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
 				for (int n = 0; n < 4; ++n) {
 					const Owner *o = validOwner(i + nb[n][0], j + nb[n][1]);
-					if (!o)
+					if (!o || o->shade)
 						continue;
 					// this pixel is one cel pixel away from the owner's, the other way round if mirrored
 					const int ddx = -nb[n][0] * ((o->rec & 0x80000000) ? -1 : 1), ddy = -nb[n][1];
-					if (celBlock(*o, o->sx + ddx, o->sy + ddy, _screen[(j + nb[n][1]) * _w + i + nb[n][0]], true, dst, dstPitch))
+					if (celBlock(*o, i + nb[n][0], j + nb[n][1], o->sx + ddx, o->sy + ddy, _screen[(j + nb[n][1]) * _w + i + nb[n][0]], true, dst, dstPitch))
 						break;
 				}
+			}
+			// Next to a shaded pixel: the shading cel's soft HD edge spills over this one
+			static const int nb4[4][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
+			for (int n = 0; n < 4; ++n) {
+				const Owner *o = validOwner(i + nb4[n][0], j + nb4[n][1]);
+				if (!o || !o->shade || !o->shadeRec)
+					continue;
+				const int ddx = -nb4[n][0] * ((o->shadeRec & 0x80000000) ? -1 : 1), ddy = -nb4[n][1];
+				const HdCel &c = _cels[(o->shadeRec & 0xFFFFF) - 1];
+				const int cx = o->ssx + ddx, cy = o->ssy + ddy;
+				byte alpha[kScale * kScale], ca, cr, cg, cb;
+				if (!shadeAlpha(*o, cx, cy, alpha))
+					continue;
+				// inside the original shape: drawn by that cel itself, or that cel pixel isn't a shading one
+				c.orig->format.colorToARGB(*(const uint32 *)c.orig->getBasePtr(cx, cy), ca, cr, cg, cb);
+				if (ca)
+					continue;
+				uint32 base[kScale * kScale];
+				for (int dy = 0; dy < kScale; ++dy)
+					memcpy(base + dy * kScale, dst + dy * dstPitch, kScale * 4);
+				shadeBlock(i + nb4[n][0], j + nb4[n][1], true, dst, dstPitch);
+				blendBlock(base, alpha, dst, dstPitch);
+				break;
 			}
 		}
 	}
@@ -716,14 +937,16 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 			Image::writePNG(f, _out);
 		debug(3, "HD dump frame_%03d", dumpCount - 1);
 		// why map: 0 no HD room, 1 not room pixel, 2 color changed, 3 actor/text,
-		// 4 no matching image pixel, 5 HD background, 6 HD object, 7 HD video, 8 HD costume
-		static const byte whyPal[9 * 3] = { 0,0,0, 60,60,60, 255,0,255, 255,0,0, 255,255,0, 0,160,0, 0,120,255, 0,255,255, 255,128,0 };
+		// 4 no matching image pixel, 5 HD background, 6 HD object, 7 HD video, 8 HD costume, 9 shaded scenery,
+		// 10 shaded HD costume, 11 shaded costume without HD pixel, 12 shaded other pixel (shadow/glass/glow)
+		static const byte whyPal[13 * 3] = { 0,0,0, 60,60,60, 255,0,255, 255,0,0, 255,255,0, 0,160,0, 0,120,255, 0,255,255, 255,128,0,
+		                                     255,255,255, 255,190,120, 160,0,0, 128,0,128 };
 		Graphics::Surface whySurf;
 		whySurf.init(_w, _h, _w, _why, Graphics::PixelFormat::createFormatCLUT8());
 		Common::DumpFile wf;
 		Common::Path wpath(Common::String::format("%s/why_%03d.png", dumpDir, dumpCount - 1), '/');
 		if (wf.open(wpath, true))
-			Image::writePNG(wf, whySurf, whyPal, 9);
+			Image::writePNG(wf, whySurf, whyPal, 13);
 	}
 }
 

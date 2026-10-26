@@ -344,14 +344,19 @@ void BaseCostumeRenderer::byleRLEDecode(ByleRLEData &compData, int16 actorHitX, 
 
 					if (color && !masked) {
 						uint16 pcolor;
+						const byte hdUnder = *dst;   // HD costumes: the pixel a shadow/translucency table is applied to
+						bool hdShade = false;
 
 						if (!_akosRendering) {
 							if (_shadowMode & 0x20) {
 								pcolor = _shadowTable[*dst];
+								hdShade = true;
 							} else {
 								pcolor = _palette[color];
-								if (pcolor == 13 && _shadowTable)
+								if (pcolor == 13 && _shadowTable) {
 									pcolor = _shadowTable[*dst];
+									hdShade = true;
+								}
 							}
 						} else {
 							pcolor = _palette[color];
@@ -362,6 +367,7 @@ void BaseCostumeRenderer::byleRLEDecode(ByleRLEData &compData, int16 actorHitX, 
 									// mode 3. It is only ever checked and applied if pcolor is 13.
 									skipColumn = (lastColumnX == compData.x);
 									pcolor = _shadowTable[*dst];
+									hdShade = true;
 								}
 							} else if (_shadowMode == 2) {
 								error("AkosRenderer::byleRLEDecode(): shadowMode 2 not implemented."); // TODO
@@ -388,6 +394,7 @@ void BaseCostumeRenderer::byleRLEDecode(ByleRLEData &compData, int16 actorHitX, 
 									skipColumn = (lastColumnX == compData.x);
 									pcolor = (pcolor << 8) + *dst;
 									pcolor = _shadowTable[pcolor];
+									hdShade = true;
 								}
 							}
 						}
@@ -398,7 +405,7 @@ void BaseCostumeRenderer::byleRLEDecode(ByleRLEData &compData, int16 actorHitX, 
 								*dst = pcolor;
 							}
 							if (_hdOwners)
-								_vm->_hd->celPixel(dst, _hdRec, hdCol, _height - height, pcolor);
+								_vm->_hd->celPixel(dst, _hdRec, hdCol, _height - height, pcolor, hdShade, hdUnder);
 						}
 					}
 				}

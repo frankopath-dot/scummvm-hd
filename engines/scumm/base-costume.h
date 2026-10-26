@@ -135,6 +135,7 @@ public:
 	// HD costumes (see HdBackgrounds::celBegin): when set, every pixel the decoder writes is reported
 	bool _hdOwners = false;
 	uint32 _hdRec = 0;
+	bool _hdRecolored = false;   // the actor palette maps the costume to other colors than its own
 
     BaseCostumeRenderer(ScummEngine *scumm, bool akosRendering = false) {
 		_actorID = 0;
