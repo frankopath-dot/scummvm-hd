@@ -91,15 +91,33 @@ public:
 	void setVirtScreen(const byte *pixels, int pitch, int height);
 	/** A cel is about to be drawn; returns the id to pass to celPixel (0: no HD cel). */
 	uint32 celBegin(int costume, uint32 akcd, bool mirror);
-	void celPixel(const byte *dst, uint32 rec, int sx, int sy, byte color) {
+	void celPixel(const byte *dst, uint32 rec, int sx, int sy, byte color, bool shade = false, byte under = 0) {
 		const ptrdiff_t i = dst - _vsPixels;
 		if (i < 0 || i >= (ptrdiff_t)_owners.size())
 			return;
 		Owner &o = _owners[i];
+		if (shade) {
+			// Drawn through the shadow palette (shadow, tinted glass, glow): its own cel color means nothing, the
+			// pixel is the one under it recolored. Keep the owner of that pixel (an actor drawn before, possibly
+			// shaded already) so it can still be drawn in HD.
+			if (o.color != under || (!o.rec && !o.shade)) {
+				o.rec = 0;
+				o.under = under;
+			} else if (!o.shade) {
+				o.under = under;
+			}
+			o.shade = true;
+			o.color = color;
+			o.shadeRec = rec;
+			o.ssx = sx;
+			o.ssy = sy;
+			return;
+		}
 		o.rec = rec;
 		o.sx = sx;
 		o.sy = sy;
 		o.color = color;
+		o.shade = false;
 	}
 
 	/** Testing aid: room from SCUMMVM_HD_ROOM to jump to, returned once (0: none). */
@@ -148,13 +166,25 @@ private:
 		uint16 gen = 0;
 		void free();
 	};
-	/** Who drew a virtual screen pixel: cel record (0: none), cel pixel and color written. */
+	/**
+	 * Who drew a virtual screen pixel: cel record (0: none), cel pixel and color written. A shaded pixel was
+	 * recolored through the shadow palette from color under; rec is then the cel pixel under it, if any, and
+	 * shadeRec, ssx, ssy the shading cel's pixel.
+	 */
 	struct Owner {
 		uint32 rec = 0;
 		uint16 sx = 0, sy = 0;
 		byte color = 0;
+		byte under = 0;
+		bool shade = false;
+		uint32 shadeRec = 0;
+		uint16 ssx = 0, ssy = 0;
 	};
-	bool celBlock(const Owner &o, int sx, int sy, byte idx, bool edge, uint32 *dst, int dstPitch) const;
+	bool shadeAlpha(const Owner &o, int sx, int sy, byte *alpha) const;
+	void blendBlock(const uint32 *base, const byte *alpha, uint32 *dst, int dstPitch) const;
+	bool shadeColors(int i, int j, uint *c) const;
+	void shadeBlock(int i, int j, bool flat, uint32 *dst, int dstPitch) const;
+	bool celBlock(const Owner &o, int oi, int oj, int sx, int sy, byte idx, bool edge, uint32 *dst, int dstPitch) const;
 	const Owner *validOwner(int i, int j) const;
 	bool decodeVideoFrame();
 

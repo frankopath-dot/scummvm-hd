@@ -258,8 +258,10 @@ void AkosRenderer::setPalette(uint16 *new_palette) {
 		for (i = 0; i < size; i++)
 			_palette[i] = (byte)_vm->_hePalettes[_paletteNum * _vm->_hePaletteSlot + 768 + _akpl[i]];
 	} else {
+		_hdRecolored = false;
 		for (i = 0; i < size; i++) {
 			_palette[i] = new_palette[i] != 0xFF ? new_palette[i] : _akpl[i];
+			_hdRecolored |= _palette[i] != _akpl[i];
 		}
 	}
 
@@ -640,7 +642,8 @@ byte AkosRenderer::paintCelByleRLE(int xMoveCur, int yMoveCur) {
 		const VirtScreen &vs = _vm->_virtscr[kMainVirtScreen];
 		_vm->_hd->setVirtScreen((const byte *)static_cast<const Graphics::Surface &>(vs).getPixels(), vs.pitch, vs.h);
 		const Actor *a = _vm->derefActor(_actorID, "paintCelByleRLE");
-		_hdRec = _vm->_hd->celBegin(a->_costume, (uint32)(_srcPtr - _akcd), !_drawActorToRight);
+		// An actor palette that recolors the costume: the HD cel's colors would be wrong
+		_hdRec = _hdRecolored ? 0 : _vm->_hd->celBegin(a->_costume, (uint32)(_srcPtr - _akcd), !_drawActorToRight);
 	}
 
 	byleRLEDecode(compData, _actorHitX, _actorHitY, _actorHitMode ? &_actorHitResult : nullptr, _xmap);
@@ -680,9 +683,9 @@ void AkosRenderer::markAsDirty(const Common::Rect &rect, ByleRLEData &compData, 
 	}
 }
 
-void AkosRenderer::hdBompPixel(void *ctx, byte *dst, int col, int row, byte color) {
+void AkosRenderer::hdBompPixel(void *ctx, byte *dst, int col, int row, byte color, bool shade, byte under) {
 	AkosRenderer *r = (AkosRenderer *)ctx;
-	r->_vm->_hd->celPixel(dst, r->_hdRec, col, row, color);
+	r->_vm->_hd->celPixel(dst, r->_hdRec, col, row, color, shade, under);
 }
 
 byte AkosRenderer::paintCelCDATRLE(int xmoveCur, int ymoveCur) {
@@ -750,7 +753,7 @@ byte AkosRenderer::paintCelCDATRLE(int xmoveCur, int ymoveCur) {
 		const VirtScreen &vs = _vm->_virtscr[kMainVirtScreen];
 		_vm->_hd->setVirtScreen((const byte *)static_cast<const Graphics::Surface &>(vs).getPixels(), vs.pitch, vs.h);
 		const Actor *a = _vm->derefActor(_actorID, "paintCelCDATRLE");
-		_hdRec = _vm->_hd->celBegin(a->_costume, (uint32)(_srcPtr - _akcd), !_drawActorToRight);
+		_hdRec = _hdRecolored ? 0 : _vm->_hd->celBegin(a->_costume, (uint32)(_srcPtr - _akcd), !_drawActorToRight);
 		bdd.hdPixel = hdBompPixel;
 		bdd.hdCtx = this;
 	}

@@ -121,7 +121,7 @@ protected:
 
 	byte paintCelByleRLE(int xMoveCur, int yMoveCur);
 	byte paintCelCDATRLE(int xMoveCur, int yMoveCur);
-	static void hdBompPixel(void *ctx, byte *dst, int col, int row, byte color);
+	static void hdBompPixel(void *ctx, byte *dst, int col, int row, byte color, bool shade, byte under);
 	byte paintCelMajMin(int xMoveCur, int yMoveCur);
 	byte paintCelTRLE(int actor, int drawToBack, int celX, int celY, int celWidth, int celHeight, byte tcolor, const byte *shadowTablePtr, int32 specialRenderFlags);
 
