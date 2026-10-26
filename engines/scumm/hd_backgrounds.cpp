@@ -968,6 +968,16 @@ int HdBackgrounds::testCameraX() {
 	return x;
 }
 
+int HdBackgrounds::testRoom() {
+	static const int room = getenv("SCUMMVM_HD_ROOM") ? atoi(getenv("SCUMMVM_HD_ROOM")) : -1;
+	return room;
+}
+
+int HdBackgrounds::testCameraY() {
+	static const int y = getenv("SCUMMVM_HD_CAMY") ? atoi(getenv("SCUMMVM_HD_CAMY")) : -1;
+	return y;
+}
+
 int HdBackgrounds::testCostume() {
 	const char *costume = getenv("SCUMMVM_HD_COSTUME");
 	return costume ? atoi(costume) : 0;

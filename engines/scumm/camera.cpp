@@ -20,6 +20,7 @@
  */
 
 #include "scumm/scumm.h"
+#include "scumm/hd_backgrounds.h"
 #include "scumm/actor.h"
 #include "scumm/charset.h"
 #include "scumm/scumm_v7.h"
@@ -181,6 +182,11 @@ void ScummEngine::cameraMoved() {
 
 	_screenStartStrip = camera._cur.x / 8 - _gdi->_numStrips / 2;
 	_screenEndStrip = _screenStartStrip + _gdi->_numStrips - 1;
+
+	// Testing aid SCUMMVM_HD_CAMY=<y> (with SCUMMVM_HD_ROOM): show that part of a tall room, which the room's
+	// scripts may only scroll to during a scripted scene
+	if (_hd && HdBackgrounds::testCameraY() >= 0 && _currentRoom == HdBackgrounds::testRoom() && _roomHeight > _screenHeight)
+		camera._cur.y = CLIP<int>(HdBackgrounds::testCameraY(), _screenHeight / 2, _roomHeight - _screenHeight / 2);
 
 	_screenTop = camera._cur.y - (_screenHeight / 2);
 	if (_game.version >= 7) {

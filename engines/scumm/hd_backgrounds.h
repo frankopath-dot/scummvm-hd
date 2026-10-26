@@ -126,6 +126,8 @@ public:
 	static int testCostume();
 	static const char *testStates();   // SCUMMVM_HD_STATE=<obj>:<state>,... or nullptr
 	static int testCameraX();          // SCUMMVM_HD_CAMX, or -1
+	static int testCameraY();          // SCUMMVM_HD_CAMY, or -1
+	static int testRoom();             // SCUMMVM_HD_ROOM, or -1
 	/** Testing aid: the SCUMMVM_HD_ROOM room when SCUMMVM_HD_WALK is set, else -1. */
 	static int testWalkRoom();
 

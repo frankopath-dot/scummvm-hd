@@ -3138,6 +3138,7 @@ void ScummEngine::scummLoop(int delta) {
 		--_hdStateLoops;
 	}
 	// SCUMMVM_HD_CAMX=<x> (with SCUMMVM_HD_ROOM): keep the camera there, for parts of wide rooms
+	// (SCUMMVM_HD_CAMY: see cameraMoved())
 	if (_hd && HdBackgrounds::testWalkRoom() < 0 && HdBackgrounds::testCameraX() >= 0 && _hdStateLoops < 100)
 		setCameraAt(HdBackgrounds::testCameraX(), camera._cur.y);
 	// SCUMMVM_HD_WALK=1 (with SCUMMVM_HD_ROOM): every 4 s the player walks to a random spot, every third
