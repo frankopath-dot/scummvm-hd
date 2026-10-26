@@ -1009,6 +1009,13 @@ void HdBackgrounds::render(int x, int y, int w, int h) {
 		Common::Path wpath(Common::String::format("%s/why_%03d.png", dumpDir, dumpCount - 1), '/');
 		if (wf.open(wpath, true))
 			Image::writePNG(wf, whySurf, whyPal, 13);
+		// and the original frame
+		Graphics::Surface origSurf;
+		origSurf.init(_w, _h, _w, _screen, Graphics::PixelFormat::createFormatCLUT8());
+		Common::DumpFile of;
+		Common::Path opath(Common::String::format("%s/orig_%03d.png", dumpDir, dumpCount - 1), '/');
+		if (of.open(opath, true))
+			Image::writePNG(of, origSurf, _palette, 256);
 	}
 }
 
