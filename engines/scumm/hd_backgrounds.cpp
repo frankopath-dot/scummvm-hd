@@ -689,6 +689,22 @@ bool HdBackgrounds::celBlock(const Owner &o, int oi, int oj, int sx, int sy, byt
 	// on top of the color the cel has on screen now, both interpolated across the block from the neighboring
 	// cel pixels. That follows fades, flashes (the power room's lightning) and recolored palette entries, which
 	// a per-channel factor can't (a channel that was near 0), and the detail is scaled with the brightness.
+	// How far to trust that detail: a recolor can flatten what were different colors (a palette entry the game
+	// sets to another color than the one stored, a flash), then the HD cel's edges between them are not there
+	// any more, so the detail is scaled by how much of the neighborhood's contrast is left. And where the hue
+	// changed a lot, only the detail's brightness is kept, not its colors.
+	auto lum = [](const int *c) { return c[0] * 3 + c[1] * 6 + c[2]; };
+	int cO = 0, cC = 0, chg = 0;
+	for (int y3 = 0; y3 < 3; ++y3) {
+		for (int x3 = 0; x3 < 3; ++x3) {
+			cO += ABS(lum(nbOrig[y3][x3]) - lum(nbOrig[1][1]));
+			cC += ABS(lum(nbCur[y3][x3]) - lum(nbCur[1][1]));
+			for (int ch = 0; ch < 3; ++ch)
+				chg += ABS(nbOrig[y3][x3][ch] - nbCur[y3][x3][ch]);
+		}
+	}
+	const int keep = cO > 80 ? MIN(256, cC * 256 / cO) : 256;   // contrast kept, 1/256
+	const int gray = CLIP((chg / 27 - 8) * 256 / 40, 0, 256);   // detail as brightness only, 1/256
 	const int n2 = 2 * kScale;
 	for (int dy = 0; dy < kScale; ++dy) {
 		for (int dx = 0; dx < kScale; ++dx) {
@@ -737,11 +753,12 @@ bool HdBackgrounds::celBlock(const Owner &o, int oi, int oj, int sx, int sy, byt
 					C[ch] = (w00 * nbCur[1][1][ch] + w01 * nbCur[1][qx][ch] + w10 * nbCur[qy][1][ch] + w11 * nbCur[qy][qx][ch]) / (n2 * n2);
 				}
 				const int lumO = O[0] * 3 + O[1] * 6 + O[2], lumC = C[0] * 3 + C[1] * 6 + C[2];
-				const int sc = CLIP((lumC + 160) * 256 / (lumO + 160), 64, 512);   // detail scale, 1/256
-				const byte h[3] = { r, g, b };
-				r = CLIP(C[0] + (h[0] - O[0]) * sc / 256, 0, 255);
-				g = CLIP(C[1] + (h[1] - O[1]) * sc / 256, 0, 255);
-				b = CLIP(C[2] + (h[2] - O[2]) * sc / 256, 0, 255);
+				const int sc = CLIP((lumC + 160) * 256 / (lumO + 160), 64, 512) * keep / 256;   // detail scale, 1/256
+				const int D[3] = { r - O[0], g - O[1], b - O[2] }, Dl = (D[0] * 3 + D[1] * 6 + D[2]) / 10;
+				int out[3];
+				for (int ch = 0; ch < 3; ++ch)
+					out[ch] = CLIP(C[ch] + (D[ch] * (256 - gray) + Dl * gray) / 256 * sc / 256, 0, 255);
+				r = out[0]; g = out[1]; b = out[2];
 			}
 			d = _format.RGBToColor((r * a + br * (255 - a)) / 255, (g * a + bg * (255 - a)) / 255, (b * a + bb * (255 - a)) / 255);
 		}
