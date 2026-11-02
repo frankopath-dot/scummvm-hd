@@ -30,7 +30,6 @@
 #include "asylum/system/config.h"
 #include "asylum/system/cursor.h"
 #include "asylum/system/graphics.h"
-#include "asylum/system/hd.h"
 #include "asylum/system/savegame.h"
 #include "asylum/system/screen.h"
 #include "asylum/system/sound.h"
@@ -110,14 +109,10 @@ bool VideoPlayer::handleEvent(const AsylumEvent &evt) {
 				getText()->draw(0, 99, kTextCenter, Common::Point(10, y), 20, 620, text);
 
 				if (_vm->checkGameVersion("Steam")) {
-					if (getScreen()->isHd()) {
-						getScreen()->hd()->copyScaled(getScreen()->getSurface()->getSubArea(Common::Rect(0, 400, 640, 480)), 0, 400, _subtitlePalette);
-					} else {
-						Graphics::Surface *st = getScreen()->getSurface()->convertTo(g_system->getScreenFormat(), _subtitlePalette);
-						g_system->copyRectToScreen((const byte *)st->getBasePtr(0, 400), st->pitch, 0, 400, 640, 80);
-						st->free();
-						delete st;
-					}
+					Graphics::Surface *st = getScreen()->getSurface()->convertTo(g_system->getScreenFormat(), _subtitlePalette);
+					g_system->copyRectToScreen((const byte *)st->getBasePtr(0, 400), st->pitch, 0, 400, 640, 80);
+					st->free();
+					delete st;
 				}
 			}
 
@@ -174,16 +169,11 @@ void VideoPlayer::play(uint32 videoNumber, EventHandler *handler) {
 }
 
 void VideoPlayer::play(const Common::Path &filename, bool showSubtitles) {
-	// HD replacement movies keep the original's aspect, at a higher resolution
-	Common::SeekableReadStream *hdStream = getScreen()->isHd() ? getScreen()->hd()->openVideo(filename.baseName()) : nullptr;
-	bool hdMovie = hdStream && _decoder->loadStream(hdStream);
-	if (!hdMovie && !_decoder->loadFile(filename))
+	if (!_decoder->loadFile(filename))
 		error("[Video::playVideo] Invalid video index (%d)", _currentMovie);
 
-	int16 width  = (int16)(hdMovie ? 640 : _decoder->getWidth());
-	int16 height = (int16)(hdMovie ? _decoder->getHeight() * 640 / _decoder->getWidth() : _decoder->getHeight());
-	int16 x = (int16)Common::Rational(640 - width,  2).toInt();
-	int16 y = (int16)Common::Rational(480 - height, 2).toInt();
+	int16 x = (int16)Common::Rational(g_system->getWidth()  - _decoder->getWidth(),  2).toInt();
+	int16 y = (int16)Common::Rational(g_system->getHeight() - _decoder->getHeight(), 2).toInt();
 
 	getScreen()->clear();
 
@@ -200,10 +190,7 @@ void VideoPlayer::play(const Common::Path &filename, bool showSubtitles) {
 	int32 frameEnd = 0;
 	int32 currentSubtitle = 0;
 
-	if (getScreen()->isHd()) {
-		// Stay in the HD screen mode and enlarge the frames into it
-		_decoder->setOutputPixelFormat(g_system->getScreenFormat());
-	} else if (_vm->checkGameVersion("Steam") || _vm->isAltDemo()) {
+	if (_vm->checkGameVersion("Steam") || _vm->isAltDemo()) {
 		_decoder->setOutputPixelFormats(g_system->getSupportedFormats());
 
 		Graphics::PixelFormat decoderFormat = _decoder->getPixelFormat();
@@ -221,12 +208,7 @@ void VideoPlayer::play(const Common::Path &filename, bool showSubtitles) {
 			if (!frame)
 				continue;
 
-			if (getScreen()->isHd() && (_vm->checkGameVersion("Steam") || _vm->isAltDemo())) {
-				if (hdMovie)
-					getScreen()->hd()->copyFitted(*frame, Common::Rect(x, y, x + width, y + height));
-				else
-					getScreen()->hd()->copyScaled(*frame, x, y);
-			} else if (_vm->checkGameVersion("Steam") || _vm->isAltDemo()) {
+			if (_vm->checkGameVersion("Steam") || _vm->isAltDemo()) {
 				g_system->copyRectToScreen((const byte *)frame->getPixels(), frame->pitch, x, y, frame->w, frame->h);
 			} else {
 				if (_decoder->hasDirtyPalette())
@@ -263,9 +245,7 @@ void VideoPlayer::play(const Common::Path &filename, bool showSubtitles) {
 			g_system->delayMillis(10);
 	}
 
-	if (getScreen()->isHd())
-		getScreen()->restoreGraphicsMode();
-	else if (_vm->checkGameVersion("Steam") || _vm->isAltDemo())
+	if (_vm->checkGameVersion("Steam") || _vm->isAltDemo())
 		initGraphics(640, 480);
 
 	_decoder->close();

@@ -20,10 +20,6 @@
  */
 
 #include "common/scummsys.h"
-#include "common/config-manager.h"
-#include "common/fs.h"
-#include "engines/util.h"
-
 #include "graphics/paletteman.h"
 
 #include "asylum/system/screen.h"
@@ -33,7 +29,6 @@
 #include "asylum/resources/worldstats.h"
 
 #include "asylum/system/graphics.h"
-#include "asylum/system/hd.h"
 
 #include "asylum/views/scene.h"
 
@@ -46,7 +41,7 @@ int g_debugDrawRects;
 
 #define TRANSPARENCY_TABLE_SIZE (256 * 256)
 
-Screen::Screen(AsylumEngine *vm) : _vm(vm), _hd(nullptr), _hdActive(false),
+Screen::Screen(AsylumEngine *vm) : _vm(vm) ,
 	_useColorKey(false), _transTableCount(0), _transTable(nullptr), _transTableBuffer(nullptr) {
 	_backBuffer.create(640, 480, Graphics::PixelFormat::createFormatCLUT8());
 
@@ -68,8 +63,6 @@ Screen::~Screen() {
 	_backBuffer.free();
 
 	clearTransTables();
-
-	delete _hd;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -181,12 +174,6 @@ void Screen::draw(GraphicResource *resource, uint32 frameIndex, const Common::Po
 	// Set the color key (always 0 if set)
 	_useColorKey = colorKey;
 
-	// The blitters adjust the rectangles they are given
-	const Common::Rect hdSrc = src, hdDest = dest;
-	const bool translucent = ((uint32)flags & 0x90000000) == 0x90000000;
-	if (_hd && translucent && !masked)
-		_hd->recordTranslucent(frame, hdSrc, hdDest, (flags & 0x6FFFFFFF) == kDrawFlagMirrorLeftRight, (const byte *)_backBuffer.getPixels());
-
 	if (masked) {
 		if (!resourceMask)
 			error("[Screen::draw] Trying to draw masked with an invalid resource mask");
@@ -195,16 +182,10 @@ void Screen::draw(GraphicResource *resource, uint32 frameIndex, const Common::Po
 	} else {
 		blit(frame, &src, &dest, flags);
 	}
-
-	if (_hd && !translucent)
-		_hd->recordDraw(resource->getResourceId(), frameIndex, frame, hdSrc, hdDest, _useColorKey, (const byte *)_backBuffer.getPixels());
 }
 
 void Screen::draw(const Graphics::Surface &surface, int x, int y) {
 	_backBuffer.copyRectToSurface(surface, x, y, Common::Rect(0, 0, surface.w, surface.h));
-
-	if (_hd)
-		_hd->invalidate(Common::Rect(x, y, x + surface.w, y + surface.h));
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -212,16 +193,11 @@ void Screen::draw(const Graphics::Surface &surface, int x, int y) {
 //////////////////////////////////////////////////////////////////////////
 void Screen::clear() {
 	_backBuffer.fillRect(Common::Rect(0, 0, 640, 480), 0);
-	if (_hd)
-		_hd->invalidateAll();
 	copyBackBufferToScreen();
 }
 
 void Screen::drawWideScreenBars(int16 barSize) const {
-	if (barSize > 0 && _hd && _hdActive) {
-		_hd->fillScreen(Common::Rect(0, 0, 640, barSize), 0);
-		_hd->fillScreen(Common::Rect(0, 480 - barSize, 640, 480), 0);
-	} else if (barSize > 0) {
+	if (barSize > 0) {
 		_vm->_system->fillScreen(Common::Rect(0, 0, 640, barSize), 0);
 		_vm->_system->fillScreen(Common::Rect(0, 480 - barSize, 640, 480), 0);
 	}
@@ -229,17 +205,9 @@ void Screen::drawWideScreenBars(int16 barSize) const {
 
 void Screen::fillRect(int16 x, int16 y, int16 width, int16 height, uint32 color) {
 	_backBuffer.fillRect(Common::Rect(x, y, x + width, y + height), color);
-
-	if (_hd)
-		_hd->invalidate(Common::Rect(x, y, x + width, y + height));
 }
 
 void Screen::copyBackBufferToScreen() {
-	if (_hd && _hdActive) {
-		_hd->present((const byte *)_backBuffer.getPixels(), _mainPalette);
-		return;
-	}
-
 	_vm->_system->copyRectToScreen((byte *)_backBuffer.getPixels(), _backBuffer.w, 0, 0, _backBuffer.w, _backBuffer.h);
 }
 
@@ -344,10 +312,7 @@ void Screen::setupPalette(byte *buffer, int start, int count) {
 	}
 
 	// Change the system palette
-	if (_hd && _hdActive)
-		_hd->paletteChanged(_mainPalette);
-	else
-		_vm->_system->getPaletteManager()->setPalette(_mainPalette, 0, 256);
+	_vm->_system->getPaletteManager()->setPalette(_mainPalette, 0, 256);
 }
 
 void Screen::updatePalette() {
@@ -717,9 +682,6 @@ void Screen::addGraphicToQueueCrossfade(ResourceId resourceId, uint32 frameIndex
 		              (uint16)(frame->surface.pitch       - dst.width()),
 		              (uint16)(_backBuffer.pitch          - dst.width()),
 		              (uint16)(frameObject->surface.pitch - dst.width()));
-
-		if (_hd)
-			_hd->invalidate(dst);
 	}
 
 	// Restore transparency table
@@ -1210,9 +1172,6 @@ void Screen::copyToBackBuffer(const byte *buffer, int32 pitch, int16 x, int16 y,
 	if (!buffer || width == 0 || height == 0)
 		return;
 
-	if (_hd)
-		_hd->invalidate(Common::Rect(x, y, x + width, y + height));
-
 	if (!mirrored) {
 		_backBuffer.copyRectToSurface(buffer, pitch, x, y, width, height);
 	} else {
@@ -1243,20 +1202,14 @@ void Screen::copyToBackBufferWithTransparency(byte *buffer, int32 pitch, int16 x
 //////////////////////////////////////////////////////////////////////////
 void Screen::drawLine(const Common::Point &source, const Common::Point &destination, uint32 color) {
 	_backBuffer.drawLine(source.x, source.y, destination.x, destination.y, color);
-
-	if (_hd)
-		_hd->invalidate(Common::Rect(MIN(source.x, destination.x), MIN(source.y, destination.y), MAX(source.x, destination.x) + 1, MAX(source.y, destination.y) + 1));
 }
 
 void Screen::drawLine(const int16 (*srcPtr)[2], const int16 (*dstPtr)[2], uint32 color) {
-	drawLine(Common::Point((*srcPtr)[0], (*srcPtr)[1]), Common::Point((*dstPtr)[0], (*dstPtr)[1]), color);
+	_backBuffer.drawLine((*srcPtr)[0], (*srcPtr)[1], (*dstPtr)[0], (*dstPtr)[1], color);
 }
 
 void Screen::drawRect(const Common::Rect &rect, uint32 color) {
 	_backBuffer.frameRect(rect, color);
-
-	if (_hd)
-		_hd->invalidate(rect);
 }
 
 void Screen::copyToBackBufferClipped(Graphics::Surface *surface, int16 x, int16 y) {
@@ -1267,9 +1220,6 @@ void Screen::copyToBackBufferClipped(Graphics::Surface *surface, int16 x, int16 
 	if (!animRect.isEmpty()) {
 		// Translate animation rectangle
 		animRect.translate(-(int16)getWorld()->xLeft, -(int16)getWorld()->yTop);
-
-		if (_hd)
-			_hd->invalidate(animRect);
 
 		int startX = animRect.right  == 640 ? 0 : surface->w - animRect.width();
 		int startY = animRect.bottom == 480 ? 0 : surface->h - animRect.height();
@@ -1289,47 +1239,6 @@ void Screen::copyToBackBufferClipped(Graphics::Surface *surface, int16 x, int16 
 			(uint16)animRect.width(),
 			(uint16)animRect.height());
 	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-// HD renderer
-//////////////////////////////////////////////////////////////////////////
-bool Screen::initHd() {
-	if (!ConfMan.hasKey("hd_dir") || ConfMan.get("hd_dir").empty())
-		return false;
-
-	Common::FSNode dir(Common::Path(ConfMan.get("hd_dir"), Common::Path::kNativeSeparator));
-	if (!dir.isDirectory()) {
-		warning("HD: '%s' is not a directory", ConfMan.get("hd_dir").c_str());
-		return false;
-	}
-
-	int scale = ConfMan.hasKey("hd_scale") ? ConfMan.getInt("hd_scale") : 3;
-	_hd = new HdRenderer(_vm->_system, dir, scale);
-	if (!_hd->initMode()) {
-		warning("HD: no 32-bit screen mode available");
-		delete _hd;
-		_hd = nullptr;
-		initGraphics(640, 480);
-		return false;
-	}
-
-	_hdActive = true;
-	debug(1, "HD renderer enabled from %s at %dx", dir.getPath().toString().c_str(), _hd->scale());
-	return true;
-}
-
-void Screen::restoreGraphicsMode() {
-	if (_hd) {
-		_hdActive = _hd->initMode();
-		if (_hdActive) {
-			_hd->paletteChanged(_mainPalette);
-			return;
-		}
-	}
-
-	initGraphics(640, 480);
-	_vm->_system->getPaletteManager()->setPalette(_mainPalette, 0, 256);
 }
 
 } // end of namespace Asylum

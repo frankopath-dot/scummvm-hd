@@ -1,22 +1,19 @@
-# ScummVM HD: The Dig HD and Sanitarium HD
+# ScummVM HD: The Dig HD
 
-This is a fork of [ScummVM](https://www.scummvm.org/) 2026.3.0 that plays two classic
-adventure games with high-resolution graphics:
-
-- **The Dig** (LucasArts, 1995) at 1280x800: AI-upscaled (4x) rooms, objects and
-  pre-rendered animations, characters scaled 4x with Scale4x, and optional HD cutscenes.
-- **Sanitarium** (DreamForge, 1998) at 1920x1440: every graphic of the game (rooms,
-  characters, animations, title cards, puzzles, menus) upscaled 4x, and optional HD cutscenes.
+This is a fork of [ScummVM](https://www.scummvm.org/) 2026.3.0 that plays **The Dig**
+(LucasArts, 1995) at 1280x800 with high-resolution graphics: AI-upscaled (4x) rooms,
+objects and pre-rendered animations, characters scaled 4x with Scale4x, and optional HD
+cutscenes.
 
 Palette effects (fades, lighting, flashes, animated water) are carried over to the HD images.
 
 **No game content is included.** The HD images are built on your PC from your own copy
-of the game (Steam, GOG or CD) by the setup program in each release. You need to own
+of the game (Steam, GOG or CD) by the setup program in the release. You need to own
 the game, and you should not share the HD images it builds.
 
 ## Download (Windows)
 
-Get the packages from the [Releases page](../../releases). Each one contains the patched
+Get the package from the [Releases page](../../releases). It contains the patched
 ScummVM, a setup program that builds the HD images (needs a GPU with Vulkan support)
 and a README with step-by-step instructions.
 
@@ -24,13 +21,11 @@ and a README with step-by-step instructions.
 
 | Branch | Contents |
 |---|---|
-| `hd-main` | both games (this page) |
+| `hd-main` | The Dig HD (this page) |
 | `dig-hd-backgrounds` | The Dig HD changes only (`engines/scumm`) |
-| `sanitarium-hd-standalone` | Sanitarium HD changes only (`engines/asylum`), on top of v2026.3.0 |
 
-To use the HD images with this build, add `hd_backgrounds=<folder>` (The Dig) or
-`hd_dir=<folder>` (Sanitarium) to the game's entry in `scummvm.ini`; the setup
-programs do this for you.
+To use the HD images with this build, add `hd_backgrounds=<folder>` to the game's entry
+in `scummvm.ini`; the setup program does this for you.
 
 ## Support
 
@@ -42,11 +37,9 @@ The HD patches are free. If you enjoy them, you can buy me a coffee on
 
 - ScummVM is GPL-3.0-or-later; this fork is too. All changes are in the commits on top of
   the `v2026.3.0` tag.
-- Upscaling models: Real-ESRGAN (BSD-3-Clause) for The Dig and the Sanitarium cutscenes;
-  [4xNomos8kSC](https://github.com/Phhofm/models) by Philip Hofmann
-  ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)) for Sanitarium's graphics.
-- The Dig is a trademark of Lucasfilm Ltd. Sanitarium belongs to its respective owners.
-  This project is not affiliated with or endorsed by them or by the ScummVM team.
+- Upscaling model: Real-ESRGAN (BSD-3-Clause).
+- The Dig is a trademark of Lucasfilm Ltd. This project is not affiliated with or endorsed
+  by Lucasfilm or by the ScummVM team.
 
 ---
 

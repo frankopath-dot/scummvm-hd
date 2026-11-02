@@ -31,7 +31,6 @@ MODULE_OBJS := \
 	system/config.o \
 	system/cursor.o \
 	system/graphics.o \
-	system/hd.o \
 	system/savegame.o \
 	system/screen.o \
 	system/sound.o \

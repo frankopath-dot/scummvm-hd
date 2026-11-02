@@ -22,8 +22,6 @@
 #include "asylum/system/cursor.h"
 
 #include "asylum/system/graphics.h"
-#include "asylum/system/hd.h"
-#include "asylum/system/screen.h"
 
 #include "asylum/asylum.h"
 
@@ -97,11 +95,6 @@ void Cursor::update() {
 	Common::Point hotspot = getHotspot(_currentFrame);
 
 	GraphicFrame *frame = _cursorRes->getFrame(_currentFrame);
-	if (getScreen()->isHd()) {
-		getScreen()->hd()->setCursor(_cursorRes->getResourceId(), _currentFrame, frame, hotspot, getScreen()->getPalette());
-		return;
-	}
-
 	CursorMan.replaceCursor(frame->surface, hotspot.x, hotspot.y, 0);
 }
 
@@ -172,13 +165,7 @@ bool Cursor::isHidden() const {
 }
 
 const Common::Point Cursor::position() const {
-	Common::Point pos = g_system->getEventManager()->getMousePos();
-	if (getScreen()->isHd()) {
-		pos.x /= (int16)getScreen()->hd()->scale();
-		pos.y /= (int16)getScreen()->hd()->scale();
-	}
-
-	return pos;
+	return g_system->getEventManager()->getMousePos();
 }
 
 } // end of namespace Asylum

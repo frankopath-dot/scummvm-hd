@@ -36,7 +36,6 @@ namespace Asylum {
 
 class AsylumEngine;
 class GraphicResource;
-class HdRenderer;
 class ResourcePack;
 
 struct GraphicFrame;
@@ -150,18 +149,8 @@ public:
 	// Used by Writings puzzle and Chinese renderer
 	Graphics::Surface *getSurface() { return &_backBuffer; };
 
-	// HD renderer (optional, see hd.h)
-	bool initHd();
-	bool isHd() const { return _hd && _hdActive; }
-	HdRenderer *hd() { return _hd; }
-	void suspendHd() { _hdActive = false; }
-	void restoreGraphicsMode();
-
 private:
 	AsylumEngine *_vm;
-
-	HdRenderer *_hd;
-	bool _hdActive;
 
 	Graphics::Surface _backBuffer;
 	Common::Rect _clipRect;
